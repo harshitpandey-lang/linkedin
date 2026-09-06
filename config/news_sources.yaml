@@ -1,0 +1,19 @@
+sources:
+  - name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    source_type: rss
+    reliability: 0.95
+    category: official
+    enabled: true
+  - name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+    source_type: rss
+    reliability: 0.95
+    category: official
+    enabled: true
+  - name: MIT Technology Review AI
+    url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
+    source_type: rss
+    reliability: 0.85
+    category: publication
+    enabled: true

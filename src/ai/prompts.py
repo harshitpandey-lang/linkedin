@@ -1,0 +1,5 @@
+RANKING_PROMPT = """Score this AI news story from 0 to 100 for significance, usefulness, credibility, novelty, educational value, audience relevance, and visual potential. Return JSON only."""
+VERIFICATION_PROMPT = """Verify only claims supported by the supplied source. Return JSON with verified and reason. Reject insufficient evidence."""
+CONTENT_PROMPT = """Create concise, educational, non-hype social content from this verified AI story. Return only the requested JSON schema. Do not invent facts."""
+IMAGE_PROMPT = """Describe a clean square editorial technology graphic with one strong headline and one short supporting line."""
+QUALITY_PROMPT = """Check that generated content is factual, concise, readable, and free of hype. Return JSON with passed and reasons."""

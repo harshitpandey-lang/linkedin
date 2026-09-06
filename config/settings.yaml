@@ -1,0 +1,17 @@
+app:
+  max_candidates: 20
+  max_article_age_hours: 48
+  duplicate_window_days: 30
+  request_timeout_seconds: 20
+  retry_attempts: 3
+  enabled_platforms: [linkedin, instagram]
+  auto_publish: false
+ai:
+  provider: gemini
+  model: gemini-2.0-flash
+image:
+  mode: programmatic
+  width: 1080
+  height: 1080
+storage:
+  bucket: social-posts
