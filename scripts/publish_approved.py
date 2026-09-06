@@ -16,8 +16,8 @@ def main() -> None:
     storage = ImageStorage(client)
     publishers = {"linkedin": LinkedInPublisher(), "instagram": InstagramPublisher()}
     for post in repository.approved_unpublished():
-        if not post.get("image_storage_path") or not post.get("image_public_url"):
-            repository.update(post["id"], {"status": "FAILED", "error_message": "Stored image path and public URL are required"})
+        if not post.get("image_storage_path"):
+            repository.update(post["id"], {"status": "FAILED", "error_message": "Stored image path is required"})
             continue
         with tempfile.NamedTemporaryFile(suffix=".png") as local_image:
             local_image.write(storage.download(post["image_storage_path"]))

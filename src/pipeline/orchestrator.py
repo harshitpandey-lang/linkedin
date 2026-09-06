@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import tempfile
+from pathlib import Path
 from datetime import datetime, timezone
 
 from src.ai.base import AIProvider
@@ -42,19 +43,19 @@ def run_pipeline(settings, provider: AIProvider, repository: PostRepository, dis
                 with tempfile.NamedTemporaryFile(suffix=".png") as image:
                     image.write(storage.download(existing_record["image_storage_path"]))
                     image.flush()
-                    _publish_record(repository, existing_record, active, image.name, existing_record.get("image_public_url", ""))
+                    _publish_record(repository, existing_record, active, Path(image.name), existing_record.get("image_public_url", ""))
                 return existing_record["id"]
     evaluated = rank_evaluations([(story, provider.evaluate(story)) for story in stories[: settings.app.get("max_candidates", 20)]])
     existing = repository.recent_posts(settings.app.get("duplicate_window_days", 30))
-    selected: tuple[NewsStory, object] | None = None
+    selected: tuple[NewsStory, object, str] | None = None
     for story, evaluation in evaluated:
         evidence = obtain_evidence(story, settings.app.get("request_timeout_seconds", 20))
         if verify_story(story, provider, evidence).verified and not detect_duplicate(story, existing).duplicate:
-            selected = (story, evaluation)
+            selected = (story, evaluation, evidence)
             break
     if selected is None:
         raise RuntimeError("No verified, non-duplicate story available")
-    story, evaluation = selected
+    story, evaluation, evidence = selected
     content = provider.generate_content(story)
     claims = "\n".join([content.headline, content.short_explanation, content.why_it_matters, content.key_takeaway, content.linkedin_caption, content.instagram_caption])
     if not provider.verify_evidence(story, evidence, claims).verified:

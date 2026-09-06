@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from src.database.repository import PostRepository
 from src.database.storage import ImageStorage
+from src.pipeline.orchestrator import _publish_record
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
 
@@ -40,6 +41,7 @@ def test_storage_path_and_upload(tmp_path: Path):
     assert key == "2026/09/06/run-1.png"
     assert storage.upload(image, key) == "https://cdn.example/2026/09/06/run-1.png"
     assert client.bucket.uploaded[0] == key
+    assert storage.download(key) == b"image"
 
 
 def test_instagram_receives_post_specific_public_url(monkeypatch, tmp_path: Path):
@@ -85,8 +87,50 @@ def test_linkedin_constructs_image_upload_and_post(tmp_path: Path):
     assert posts[1][2]["json"]["content"]["media"]["id"] == "urn:li:image:1"
 
 
+def test_linkedin_resolves_organization_and_page_authors():
+    assert LinkedInPublisher(token="token", author_type="organization", organization_id="42").resolve_author() == "urn:li:organization:42"
+    assert LinkedInPublisher(token="token", author_type="page", organization_id="42").resolve_author() == "urn:li:organization:42"
+
+
+def test_linkedin_validates_configured_author_urn():
+    publisher = LinkedInPublisher(token="token", author_type="person", author_urn="urn:li:organization:42")
+    try:
+        publisher.resolve_author()
+    except ValueError as error:
+        assert "urn:li:person:" in str(error)
+    else:
+        raise AssertionError("invalid person author URN was accepted")
+
+
+def test_publish_record_does_not_retry_successful_platform():
+    class Publisher:
+        def __init__(self):
+            self.calls = 0
+
+        def publish(self, *_args):
+            self.calls += 1
+            return SimpleNamespace(success=True, post_id="instagram-1", error="")
+
+    class Repository:
+        def __init__(self):
+            self.updates = []
+
+        def update(self, post_id, values):
+            self.updates.append((post_id, values))
+
+    linkedin = Publisher()
+    instagram = Publisher()
+    record = {"id": "post-1", "linkedin_status": "PUBLISHED", "linkedin_caption": "already done", "instagram_caption": "new caption"}
+    repository = Repository()
+    _publish_record(repository, record, {"linkedin": linkedin, "instagram": instagram}, Path("image.png"), "https://cdn.example/image.png")
+    assert linkedin.calls == 0
+    assert instagram.calls == 1
+    assert repository.updates[0][1]["instagram_status"] == "PUBLISHED"
+
+
 def test_recent_posts_applies_duplicate_window():
     calls = []
     query = SimpleNamespace(select=lambda *_: query, gte=lambda *args: calls.append(args) or query, limit=lambda *_: query, execute=lambda: SimpleNamespace(data=[]))
     PostRepository(SimpleNamespace(table=lambda _: query)).recent_posts(7)
     assert calls[0][0] == "created_at"
+    assert calls[0][1].endswith("+00:00")

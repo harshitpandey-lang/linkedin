@@ -31,7 +31,7 @@ tests/
 - Persisted `image_storage_path` and `image_public_url`; local artifact paths are never persisted as permanent media references.
 - Approval-mode publishing retrieves the image from Storage. Already successful platforms are skipped on retries.
 - Instagram publishes the stored post-specific public URL.
-- LinkedIn resolves a configured organization or a person from `/v2/userinfo`, initializes an image upload, uploads the PNG, then creates a REST Posts API image post.
+- LinkedIn resolves a configured person from `/v2/userinfo`, or an organization/page from an organization ID or matching author URN; it initializes an image upload, uploads the PNG, then creates a REST Posts API image post.
 
 ## API integrations and variables
 
@@ -52,7 +52,7 @@ The daily workflow installs dependencies, runs pytest, then runs `python -m src.
 - Live Gemini, Supabase, LinkedIn, and Meta calls cannot be tested without credentials and account approval/scopes.
 - HTML evidence extraction is deliberately lightweight and may include navigation text or fail on paywalls/JavaScript-rendered pages.
 - The public Storage bucket is necessary for Instagram's URL ingestion; use a carefully scoped bucket policy.
-- LinkedIn API versions and app-product access change; keep `LINKEDIN_API_VERSION` current and ensure `openid/profile` for automatic personal author lookup, or set `LINKEDIN_AUTHOR_URN`.
+- LinkedIn API versions and app-product access change; keep `LINKEDIN_API_VERSION` current. Person mode requires a token accepted by `/v2/userinfo` and a `urn:li:person:*` author URN if configured; organization/page mode requires `LINKEDIN_ORGANIZATION_ID` or a `urn:li:organization:*` author URN.
 - Database schema migration must be applied manually. No live Supabase project was available for a query test.
 
 ## Next steps
@@ -65,3 +65,4 @@ The daily workflow installs dependencies, runs pytest, then runs `python -m src.
 ## Changelog
 
 - 2026-09-06: wired ImageStorage into orchestration; removed static Instagram image configuration; implemented LinkedIn image upload + REST post creation; made approval publishing storage-backed; added evidence-based verification; applied duplicate-window query filtering; added mocked integration coverage and updated documentation.
+- 2026-09-07: retained selected-story evidence through content validation, validated person versus organization/page author URNs, and added retry/idempotency coverage.

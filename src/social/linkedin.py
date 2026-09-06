@@ -21,14 +21,17 @@ class LinkedInPublisher:
         return {"Authorization": f"Bearer {self.token}", "Linkedin-Version": self.api_version, "X-Restli-Protocol-Version": "2.0.0"}
 
     def resolve_author(self) -> str:
+        if self.author_type not in {"person", "organization", "page"}:
+            raise ValueError("LINKEDIN_AUTHOR_TYPE must be 'person', 'organization', or 'page'")
         if self.author_urn:
+            expected_prefix = "urn:li:organization:" if self.author_type in {"organization", "page"} else "urn:li:person:"
+            if not self.author_urn.startswith(expected_prefix):
+                raise ValueError(f"LINKEDIN_AUTHOR_URN must use {expected_prefix}")
             return self.author_urn
-        if self.author_type == "organization":
+        if self.author_type in {"organization", "page"}:
             if not self.organization_id:
                 raise ValueError("LINKEDIN_ORGANIZATION_ID or LINKEDIN_AUTHOR_URN is required for organization posting")
             return f"urn:li:organization:{self.organization_id}"
-        if self.author_type != "person":
-            raise ValueError("LINKEDIN_AUTHOR_TYPE must be 'person' or 'organization'")
         response = self.client.get("https://api.linkedin.com/v2/userinfo", headers=self.headers)
         response.raise_for_status()
         person_id = response.json().get("sub")
