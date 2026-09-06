@@ -19,9 +19,9 @@ The service-role key is server-side only. Never commit `.env` or print secrets.
 
 ## Environment variables
 
-`GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_API_VERSION`, `META_APP_ID`, `META_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, `IMAGE_PUBLIC_URL`, `AUTO_PUBLISH`, and `LOG_LEVEL` are supported. LinkedIn and Meta OAuth setup remains user configuration; no credentials are included here.
+`GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_AUTHOR_URN`, `LINKEDIN_API_VERSION`, `META_APP_ID`, `META_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, `AUTO_PUBLISH`, and `LOG_LEVEL` are supported. LinkedIn and Meta OAuth setup remains user configuration; no credentials are included here.
 
-Instagram requires the uploaded image to be publicly reachable. Set `IMAGE_PUBLIC_URL` to the URL for the stored image, or extend `ImageStorage` to publish the returned Supabase public URL before calling the Instagram publisher.
+Instagram receives the public URL of the specific image that the pipeline uploads to Supabase Storage. It requires a public `social-posts` bucket and a Professional Instagram account with publishing permissions.
 
 ## Publishing modes
 

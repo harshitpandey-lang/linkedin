@@ -49,3 +49,8 @@ class GeneratedContent(BaseModel):
     hashtags: list[str] = Field(min_length=1)
     image_text: str = Field(min_length=3)
     image_prompt: str = Field(min_length=10)
+
+
+class EvidenceVerification(BaseModel):
+    verified: bool
+    reason: str = ""

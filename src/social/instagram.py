@@ -12,10 +12,10 @@ class InstagramPublisher:
         self.token = token or os.environ["INSTAGRAM_ACCESS_TOKEN"]
         self.account_id = account_id or os.environ["INSTAGRAM_ACCOUNT_ID"]
 
-    def publish(self, caption: str, image: Path) -> PublishResult:
-        public_url = os.getenv("IMAGE_PUBLIC_URL")
+    def publish(self, caption: str, image: Path, image_public_url: str = "") -> PublishResult:
+        public_url = image_public_url
         if not public_url:
-            return PublishResult(False, error="IMAGE_PUBLIC_URL is required for Instagram publishing")
+            return PublishResult(False, error="A generated image_public_url is required for Instagram publishing")
         base = f"https://graph.facebook.com/v20.0/{self.account_id}"
         try:
             container = httpx.post(f"{base}/media", params={"image_url": public_url, "caption": caption, "access_token": self.token}, timeout=30)

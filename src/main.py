@@ -6,6 +6,7 @@ import os
 from src.ai.gemini_provider import GeminiProvider
 from src.config.loader import load_settings
 from src.database.repository import PostRepository
+from src.database.storage import ImageStorage
 from src.database.supabase_client import get_client
 from src.news.discovery import discover_sources
 from src.pipeline.orchestrator import run_pipeline
@@ -23,7 +24,8 @@ def main() -> None:
         publishers["linkedin"] = LinkedInPublisher()
     if "instagram" in settings.app.get("enabled_platforms", []):
         publishers["instagram"] = InstagramPublisher()
-    post_id = run_pipeline(settings, provider, PostRepository(get_client()), discover_sources, publishers)
+    client = get_client()
+    post_id = run_pipeline(settings, provider, PostRepository(client), discover_sources, publishers, ImageStorage(client, settings.storage.get("bucket", "social-posts")))
     logging.info("Pipeline completed for post %s", post_id)
 
 
