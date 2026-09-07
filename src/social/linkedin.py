@@ -52,7 +52,7 @@ class LinkedInPublisher:
             post = self.client.post("https://api.linkedin.com/rest/posts", headers={**self.headers, "Content-Type": "application/json"}, json=payload)
             post.raise_for_status()
             post_data = post.json()
-            post_id = post.headers.get("x-restli-id") or post.headers.get("X-RestLi-Id") or post_data.get("id", "")
+            post_id = next((value for key, value in post.headers.items() if key.lower() == "x-restli-id"), "") or post_data.get("id", "")
             return PublishResult(True, post_id)
         except (httpx.HTTPError, KeyError, ValueError, OSError) as exc:
             return PublishResult(False, error=str(exc))

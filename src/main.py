@@ -20,10 +20,11 @@ def main() -> None:
     settings = load_settings()
     provider = GeminiProvider(os.environ["GEMINI_API_KEY"], settings.ai.get("model", os.getenv("GEMINI_MODEL", "gemini-2.0-flash")))
     publishers = {}
-    if "linkedin" in settings.app.get("enabled_platforms", []):
-        publishers["linkedin"] = LinkedInPublisher()
-    if "instagram" in settings.app.get("enabled_platforms", []):
-        publishers["instagram"] = InstagramPublisher()
+    if settings.auto_publish:
+        if "linkedin" in settings.app.get("enabled_platforms", []):
+            publishers["linkedin"] = LinkedInPublisher()
+        if "instagram" in settings.app.get("enabled_platforms", []):
+            publishers["instagram"] = InstagramPublisher()
     client = get_client()
     post_id = run_pipeline(settings, provider, PostRepository(client), discover_sources, publishers, ImageStorage(client, settings.storage.get("bucket", "social-posts")))
     logging.info("Pipeline completed for post %s", post_id)
