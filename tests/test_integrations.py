@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from src.database.repository import PostRepository
 from src.database.storage import ImageStorage
 from src.config.loader import Settings
+from src.database import supabase_client
 from src.pipeline.orchestrator import _publish_record
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
@@ -49,6 +50,29 @@ def test_empty_auto_publish_defaults_to_false(monkeypatch):
     monkeypatch.setenv("AUTO_PUBLISH", "")
     settings = Settings(Path("."), {"auto_publish": False}, {}, {}, {}, {}, [])
     assert settings.auto_publish is False
+
+
+def test_supabase_client_accepts_modern_secret_key(monkeypatch):
+    captured = {}
+
+    class FakeOptions:
+        headers = {}
+
+    class FakeClient:
+        options = FakeOptions()
+        supabase_key = ""
+
+    def fake_create_client(url, key):
+        captured["url"], captured["key"] = url, key
+        return FakeClient()
+
+    monkeypatch.setattr(supabase_client, "create_client", fake_create_client)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_test_only")
+    client = supabase_client.get_client()
+    assert captured == {"url": "https://example.supabase.co", "key": supabase_client._BOOTSTRAP_KEY}
+    assert client.supabase_key == "sb_secret_test_only"
+    assert client.options.headers["apiKey"] == "sb_secret_test_only"
 
 
 def test_instagram_receives_post_specific_public_url(monkeypatch, tmp_path: Path):
