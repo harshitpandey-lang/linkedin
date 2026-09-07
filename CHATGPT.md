@@ -63,6 +63,7 @@ The daily workflow installs the pinned dependency set, runs pytest, runs Ruff, t
 - GitHub Actions can expose unset optional variables as empty strings. LinkedIn now treats empty `LINKEDIN_AUTHOR_TYPE` and `LINKEDIN_API_VERSION` as unset defaults, and the application applies the same empty-safe fallback to `LOG_LEVEL` and `GEMINI_MODEL`.
 - The LinkedIn integration fixture now returns upload metadata only from `initializeUpload` and returns `x-restli-id: urn:li:share:1` only from `/rest/posts`. This prevents a successful mock response from losing its post ID while preserving the complete image-publishing flow.
 - `SUPABASE_SERVICE_ROLE_KEY` is a server-only modern Supabase Secret Key in `sb_secret_...` format. PyPI `supabase==2.31.0` still has a legacy JWT-only local key check, while the official upstream source has removed that obsolete validation. The dependency is pinned to the official `supabase-py` `src/supabase` package at commit `bb7ecc5`; `get_client()` now uses the public `create_client(url, key)` API directly, and database plus Storage clients inherit the real key without internal mutation or a fake bootstrap key.
+- The dependency graph pins `pydantic==2.13.5`, which satisfies `realtime==2.31.0` and `storage3==2.31.0` requirements of `pydantic>=2.11.7,<3.0.0`. The prior `pydantic==2.9.2` pin was incompatible with the Supabase stack.
 - Database schema migrations must be applied manually. Migration `002_evidence_metadata.sql` is required for the current record payload.
 
 ## Next steps

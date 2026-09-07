@@ -8,7 +8,7 @@ A configuration-driven Python 3.12 pipeline that discovers recent AI news, verif
 
 ## Setup
 
-1. Create Python 3.12+ and install dependencies: `python -m pip install -r requirements.txt`.
+1. Create Python 3.12+ and install dependencies: `python -m pip install --upgrade pip`, then `python -m pip install -r requirements.txt`. The requirements pin Pydantic to the version range required by the Supabase 2.31 dependency graph.
 2. Copy `.env.example` to `.env` and fill only credentials you own. Never commit `.env`.
 3. Apply `supabase/migrations/001_initial.sql`, then `002_evidence_metadata.sql`, in the Supabase SQL editor. The `social-posts` bucket must be public for Instagram's URL ingestion.
 4. Edit `config/settings.yaml`, `config/brand.yaml`, and `config/news_sources.yaml`.

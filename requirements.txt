@@ -1,7 +1,7 @@
 feedparser==6.0.11
 httpx==0.27.2
 Pillow==10.4.0
-pydantic==2.9.2
+pydantic==2.13.5
 python-dotenv==1.0.1
 PyYAML==6.0.2
 supabase @ git+https://github.com/supabase/supabase-py.git@bb7ecc5fb86f5f8729c40a3885c6154d9b9f6262#subdirectory=src/supabase
