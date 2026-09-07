@@ -5,7 +5,7 @@ create table if not exists posts (
   news_title text not null, news_summary text, news_url text not null, news_source text, news_published_at timestamptz,
   ai_score integer, credibility_score integer, usefulness_score integer, novelty_score integer,
   headline text, short_explanation text, why_it_matters text, key_takeaway text, linkedin_caption text, instagram_caption text,
-  hashtags text[], image_storage_path text, image_public_url text, status text not null, approval_status text not null default 'PENDING',
+  hashtags text[], evidence_verified boolean not null default false, evidence_reason text, image_storage_path text, image_public_url text, status text not null, approval_status text not null default 'PENDING',
   linkedin_status text, linkedin_post_id text, linkedin_error text, instagram_status text, instagram_post_id text, instagram_error text,
   published_at timestamptz, run_id uuid not null unique, error_message text
 );

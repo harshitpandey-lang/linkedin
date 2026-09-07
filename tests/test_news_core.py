@@ -1,9 +1,13 @@
 from types import SimpleNamespace
+import httpx
 
 from src.news.duplicate_detection import detect_duplicate
 from src.news.models import GeneratedContent, NewsStory
 from src.news.normalization import normalize_entry
 from src.news.verification import verify_story
+from src.news.discovery import discover_sources
+from src.ai.gemini_provider import GeminiProvider
+from src.pipeline.orchestrator import run_pipeline
 
 
 def test_normalize_rss_entry():
@@ -27,3 +31,104 @@ def test_generated_content_contract():
 def test_story_verification_requires_source_evidence():
     story = NewsStory(title="Verified news", source_name="Example", source_url="https://example.com/news", reliability=0.9)
     assert not verify_story(story, provider=object(), evidence="").verified
+
+
+def test_discovery_skips_unavailable_source(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr("src.news.discovery.httpx.get", fail)
+    assert discover_sources([{"name": "Broken", "url": "https://example.com/rss", "source_type": "rss"}]) == []
+
+
+def test_gemini_reports_malformed_json(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "not-json"}]}}]}
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *_args, **_kwargs: Response())
+    try:
+        GeminiProvider("test-key")._json("prompt")
+    except RuntimeError as error:
+        assert "Gemini response could not be validated" in str(error)
+    else:
+        raise AssertionError("malformed Gemini JSON was accepted")
+
+
+def test_gemini_retries_rate_limit(monkeypatch):
+    attempts = []
+
+    class Response:
+        def raise_for_status(self):
+            if len(attempts) == 1:
+                raise httpx.HTTPStatusError("rate limited", request=httpx.Request("POST", "https://example.com"), response=httpx.Response(429))
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    def post(*_args, **_kwargs):
+        attempts.append(True)
+        return Response()
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", post)
+    monkeypatch.setattr("src.ai.gemini_provider.time.sleep", lambda _seconds: None)
+    assert GeminiProvider("test-key", retries=2)._json("prompt") == {}
+    assert len(attempts) == 2
+
+
+def test_pipeline_stores_verified_pending_record(tmp_path, monkeypatch):
+    story = NewsStory(title="A verified AI story", summary="Source summary", source_name="Example", source_url="https://example.com/story", reliability=0.9)
+    evaluation = SimpleNamespace(total=90, credibility=90, usefulness=80, novelty=85)
+    content = GeneratedContent(headline="Verified headline", short_explanation="A factual explanation.", why_it_matters="This matters to builders.", key_takeaway="Check the source.", linkedin_caption="A factual LinkedIn caption with evidence.", instagram_caption="A factual Instagram caption with evidence.", hashtags=["#AI"], image_text="Verified story", image_prompt="Editorial technology graphic")
+
+    class Provider:
+        def evaluate(self, _story):
+            return evaluation
+
+        def generate_content(self, _story, evidence):
+            assert evidence == "source evidence"
+            return content
+
+        def verify_evidence(self, _story, evidence, claims=""):
+            assert evidence == "source evidence"
+            return SimpleNamespace(verified=True, reason="Supported by source")
+
+    class Repository:
+        def __init__(self):
+            self.record = None
+
+        def recent_posts(self, _days):
+            return []
+
+        def create(self, values):
+            self.record = {"id": "post-1", **values}
+            return self.record
+
+    class Storage:
+        def storage_path_for(self, run_id):
+            return f"{run_id}.png"
+
+        def upload(self, _path, storage_path):
+            return f"https://cdn.example/{storage_path}"
+
+    monkeypatch.setattr("src.pipeline.orchestrator.obtain_evidence", lambda *_args: "source evidence")
+    monkeypatch.setattr("src.pipeline.orchestrator.verify_story", lambda *_args: SimpleNamespace(verified=True, reason="verified"))
+    monkeypatch.setattr("src.pipeline.orchestrator.detect_duplicate", lambda *_args: SimpleNamespace(duplicate=False))
+    def create_image(_content, path, *_args):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png")
+        return path
+
+    monkeypatch.setattr("src.pipeline.orchestrator.generate_image", create_image)
+    monkeypatch.setattr("src.pipeline.orchestrator.validate_image", lambda *_args: (True, ""))
+    settings = SimpleNamespace(root=tmp_path, auto_publish=False, news_sources=[], app={"max_article_age_hours": 48, "max_candidates": 1, "duplicate_window_days": 30, "request_timeout_seconds": 1}, image={}, brand={}, storage={})
+    repository = Repository()
+    post_id = run_pipeline(settings, Provider(), repository, lambda *_args: [story], storage=Storage())
+    assert post_id == "post-1"
+    assert repository.record["status"] == "PENDING_APPROVAL"
+    assert repository.record["approval_status"] == "PENDING"
+    assert repository.record["evidence_verified"] is True
+    assert repository.record["image_storage_path"].endswith(".png")

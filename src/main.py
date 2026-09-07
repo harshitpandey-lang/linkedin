@@ -18,7 +18,10 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL") or "INFO", format="%(asctime)s 
 
 def main() -> None:
     settings = load_settings()
-    provider = GeminiProvider(os.environ["GEMINI_API_KEY"], settings.ai.get("model") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        raise RuntimeError("GEMINI_API_KEY is required")
+    provider = GeminiProvider(gemini_key, settings.ai.get("model") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash", retries=settings.app.get("retry_attempts", 3))
     publishers = {}
     if settings.auto_publish:
         if "linkedin" in settings.app.get("enabled_platforms", []):

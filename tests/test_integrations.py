@@ -6,6 +6,8 @@ from src.database.repository import PostRepository
 from src.database.storage import ImageStorage
 from src.config.loader import Settings
 from src.database import supabase_client
+from src.main import main as run_main
+from scripts.publish_approved import publish_approved_posts
 from src.pipeline.orchestrator import _publish_record
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
@@ -46,10 +48,57 @@ def test_storage_path_and_upload(tmp_path: Path):
     assert storage.download(key) == b"image"
 
 
+def test_approval_publishing_downloads_storage_image_and_skips_published_platform(tmp_path: Path):
+    class Repository:
+        def __init__(self):
+            self.updates = []
+
+        def approved_unpublished(self):
+            return [{"id": "post-1", "image_storage_path": "2026/post.png", "image_public_url": "https://cdn.example/post.png", "linkedin_status": "PUBLISHED", "instagram_caption": "caption"}]
+
+        def update(self, post_id, values):
+            self.updates.append((post_id, values))
+
+    class Storage:
+        def download(self, path):
+            assert path == "2026/post.png"
+            return b"stored image"
+
+    class Publisher:
+        def __init__(self):
+            self.calls = []
+
+        def publish(self, caption, image, image_public_url):
+            self.calls.append((caption, image.read_bytes(), image_public_url))
+            return SimpleNamespace(success=True, post_id="instagram-1", error="")
+
+    linkedin = Publisher()
+    instagram = Publisher()
+    repository = Repository()
+    publish_approved_posts(repository, Storage(), {"linkedin": linkedin, "instagram": instagram})
+    assert linkedin.calls == []
+    assert instagram.calls == [("caption", b"stored image", "https://cdn.example/post.png")]
+    assert repository.updates[0][1]["instagram_status"] == "PUBLISHED"
+
+
 def test_empty_auto_publish_defaults_to_false(monkeypatch):
     monkeypatch.setenv("AUTO_PUBLISH", "")
     settings = Settings(Path("."), {"auto_publish": False}, {}, {}, {}, {}, [])
     assert settings.auto_publish is False
+
+
+def test_main_does_not_construct_social_publishers_when_disabled(monkeypatch):
+    settings = SimpleNamespace(auto_publish=False, app={"enabled_platforms": ["linkedin", "instagram"]}, ai={}, storage={})
+    monkeypatch.setattr("src.main.load_settings", lambda: settings)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("src.main.GeminiProvider", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("src.main.get_client", lambda: object())
+    monkeypatch.setattr("src.main.ImageStorage", lambda *_args: object())
+    monkeypatch.setattr("src.main.PostRepository", lambda *_args: object())
+    monkeypatch.setattr("src.main.run_pipeline", lambda _settings, _provider, _repository, _discover, publishers, _storage: publishers or "post-1")
+    monkeypatch.setattr("src.main.LinkedInPublisher", lambda: (_ for _ in ()).throw(AssertionError("LinkedIn constructed")))
+    monkeypatch.setattr("src.main.InstagramPublisher", lambda: (_ for _ in ()).throw(AssertionError("Instagram constructed")))
+    run_main()
 
 
 def test_supabase_client_accepts_modern_secret_key(monkeypatch):

@@ -10,14 +10,15 @@ This is a Python 3.12 AI-news social-post pipeline. It discovers RSS stories, ob
 src/
   ai/            provider protocol, Gemini integration, centralized prompts
   config/        YAML and environment loading
-  database/      Supabase post repository and ImageStorage
+  database/      Supabase post repository, modern-key client, and ImageStorage
   image/         programmatic image generation and validation
   news/          RSS discovery, normalization, filtering, ranking, verification, duplicate checks
   pipeline/      orchestrator
   social/        LinkedIn and Instagram publishers
 scripts/publish_approved.py
 config/          application, brand, and RSS-source configuration
-supabase/migrations/001_initial.sql
+  supabase/migrations/001_initial.sql
+  supabase/migrations/002_evidence_metadata.sql
 .github/workflows/daily_ai_news.yml
 tests/
 ```
@@ -29,6 +30,7 @@ tests/
 - Gemini evidence verification before selection and again against generated social copy.
 - Local PNG generation and validation, then deterministic Supabase Storage upload at `YYYY/MM/DD/{run_id}.png`.
 - Persisted `image_storage_path` and `image_public_url`; local artifact paths are never persisted as permanent media references.
+- Persisted `evidence_verified` and `evidence_reason`; apply migration `002_evidence_metadata.sql` to existing projects.
 - Approval-mode publishing retrieves the image from Storage. Already successful platforms are skipped on retries.
 - Instagram publishes the stored post-specific public URL.
 - LinkedIn resolves a configured person from `/v2/userinfo`, or an organization/page from an organization ID or matching author URN; it initializes an image upload, uploads the PNG, then creates a REST Posts API image post.
@@ -45,11 +47,14 @@ Required configuration names: `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, 
 
 ## GitHub Actions
 
-The daily workflow installs dependencies, runs pytest, then runs `python -m src.main` daily at 09:00 UTC or on manual dispatch. Configure secrets before enabling actual publication. It does not prove live APIs are functional.
+The daily workflow installs the pinned dependency set, runs pytest, runs Ruff, then runs `python -m src.main` daily at 09:00 UTC or on manual dispatch. Configure the Gemini and Supabase secrets before running the application. With `AUTO_PUBLISH=false`, the application does not construct social publishers. The workflow does not prove live platform APIs are functional.
 
 ## Known limitations and issues
 
-- Live Gemini, Supabase, LinkedIn, and Meta calls cannot be tested without credentials and account approval/scopes.
+- Repository-level tests use synthetic credentials and mocked platform calls. No live Gemini, Supabase, LinkedIn, or Meta calls have been verified in this environment.
+- A live, no-network Supabase construction smoke test passed using the configured URL and secret key; it verified the database builder and Storage client headers. No database query or Storage upload was attempted.
+- The safe application run was not completed because `GEMINI_API_KEY` is not present in the execution environment; startup now reports that requirement clearly before making external calls.
+- The safe live path should be run with `AUTO_PUBLISH=false` only after the configured Gemini and Supabase secrets are available; it creates a pending record and does not call social APIs.
 - HTML evidence extraction is deliberately lightweight and may include navigation text or fail on paywalls/JavaScript-rendered pages.
 - The public Storage bucket is necessary for Instagram's URL ingestion; use a carefully scoped bucket policy.
 - LinkedIn API versions and app-product access change; keep `LINKEDIN_API_VERSION` current. Person mode requires a token accepted by `/v2/userinfo` and a `urn:li:person:*` author URN if configured; organization/page mode requires `LINKEDIN_ORGANIZATION_ID` or a `urn:li:organization:*` author URN.
@@ -58,16 +63,17 @@ The daily workflow installs dependencies, runs pytest, then runs `python -m src.
 - GitHub Actions can expose unset optional variables as empty strings. LinkedIn now treats empty `LINKEDIN_AUTHOR_TYPE` and `LINKEDIN_API_VERSION` as unset defaults, and the application applies the same empty-safe fallback to `LOG_LEVEL` and `GEMINI_MODEL`.
 - The LinkedIn integration fixture now returns upload metadata only from `initializeUpload` and returns `x-restli-id: urn:li:share:1` only from `/rest/posts`. This prevents a successful mock response from losing its post ID while preserving the complete image-publishing flow.
 - `SUPABASE_SERVICE_ROLE_KEY` is a server-only modern Supabase Secret Key in `sb_secret_...` format. PyPI `supabase==2.31.0` still has a legacy JWT-only local key check, while the official upstream source has removed that obsolete validation. The dependency is pinned to the official `supabase-py` `src/supabase` package at commit `bb7ecc5`; `get_client()` now uses the public `create_client(url, key)` API directly, and database plus Storage clients inherit the real key without internal mutation or a fake bootstrap key.
-- Database schema migration must be applied manually. No live Supabase project was available for a query test.
+- Database schema migrations must be applied manually. Migration `002_evidence_metadata.sql` is required for the current record payload.
 
 ## Next steps
 
-1. Apply the migration and configure the bucket policy for the server-side service-role workflow.
-2. Add GitHub secrets and obtain LinkedIn `w_member_social` or `w_organization_social`, plus appropriate Meta permissions.
-3. Test publishing in a non-production account; validate personal and organization LinkedIn author modes.
+1. Run the safe `AUTO_PUBLISH=false` workflow with the configured Gemini and Supabase secrets and inspect the pending database record.
+2. Apply migration `002_evidence_metadata.sql` if the existing project has only migration `001`.
+3. Add LinkedIn credentials/scopes and Meta credentials/permissions only when publication is intentionally enabled.
 4. Consider a stronger article-text extractor and a durable per-platform publishing lock for high-concurrency triggering.
 
 ## Changelog
 
 - 2026-09-06: wired ImageStorage into orchestration; removed static Instagram image configuration; implemented LinkedIn image upload + REST post creation; made approval publishing storage-backed; added evidence-based verification; applied duplicate-window query filtering; added mocked integration coverage and updated documentation.
 - 2026-09-07: retained selected-story evidence through content validation, validated person versus organization/page author URNs, and added retry/idempotency coverage.
+- 2026-09-07: hardened per-source discovery and approval publishing failures, persisted evidence metadata, added Gemini transient retries, added the Ruff workflow step, and expanded safe approval-mode coverage.

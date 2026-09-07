@@ -1,6 +1,6 @@
 # AI News Social Agent
 
-A configuration-driven Python 3.12 pipeline that discovers AI news, ranks and verifies one story, generates structured social content with Gemini, creates a 1080x1080 branded graphic, stores the record in Supabase, and optionally publishes to LinkedIn and Instagram.
+A configuration-driven Python 3.12 pipeline that discovers recent AI news, verifies source evidence, generates structured Gemini content, creates a validated 1080x1080 branded PNG, stores it durably in Supabase, and optionally publishes independently to LinkedIn and Instagram.
 
 ## Architecture
 
@@ -9,17 +9,19 @@ A configuration-driven Python 3.12 pipeline that discovers AI news, ranks and ve
 ## Setup
 
 1. Create Python 3.12+ and install dependencies: `python -m pip install -r requirements.txt`.
-2. Copy `.env.example` to `.env` and fill only credentials you own.
-3. Apply `supabase/migrations/001_initial.sql` in the Supabase SQL editor.
+2. Copy `.env.example` to `.env` and fill only credentials you own. Never commit `.env`.
+3. Apply `supabase/migrations/001_initial.sql`, then `002_evidence_metadata.sql`, in the Supabase SQL editor. The `social-posts` bucket must be public for Instagram's URL ingestion.
 4. Edit `config/settings.yaml`, `config/brand.yaml`, and `config/news_sources.yaml`.
-5. Run credential-free tests: `python -m pytest -q`.
-6. Run the pipeline locally with `python -m src.main` after configuring Gemini and Supabase.
+5. Run `python -m pytest -q` and `python -m ruff check .`.
+6. Run `python -m src.main` only after configuring Gemini and Supabase. With `AUTO_PUBLISH=false`, LinkedIn and Instagram credentials are not required and no social publisher is constructed.
 
 The service-role key is server-side only. Never commit `.env` or print secrets.
 
 ## Environment variables
 
-`GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_AUTHOR_URN`, `LINKEDIN_API_VERSION`, `META_APP_ID`, `META_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, `AUTO_PUBLISH`, and `LOG_LEVEL` are supported. Set `LINKEDIN_AUTHOR_TYPE` to `person`, `organization`, or `page`; person mode resolves the member through LinkedIn `/v2/userinfo`, while organization/page mode uses the configured organization ID or matching author URN. LinkedIn and Meta OAuth setup remains user configuration; no credentials are included here.
+Supported environment variables are `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_AUTHOR_URN`, `LINKEDIN_API_VERSION`, `META_APP_ID`, `META_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, `AUTO_PUBLISH`, and `LOG_LEVEL`.
+
+`SUPABASE_SERVICE_ROLE_KEY` keeps its existing name for workflow compatibility but contains the server-only modern `sb_secret_...` key. `AUTO_PUBLISH` defaults to false, including when the environment value is empty. Optional values treat empty strings as unset.
 
 Every generated image is uploaded to the configured Supabase Storage bucket before the post row is created. Both its `image_storage_path` and `image_public_url` are stored; Instagram receives that row-specific URL, while LinkedIn uploads the Storage-downloaded PNG through LinkedIn's image API. The bucket must be public for Instagram and the account must be Professional with publishing permissions.
 
@@ -29,7 +31,15 @@ Every generated image is uploaded to the configured Supabase Storage bucket befo
 
 ## GitHub Actions
 
-`.github/workflows/daily_ai_news.yml` runs tests and then the pipeline daily at 09:00 UTC, and supports `workflow_dispatch`. Add secrets for credentials and repository variables for non-secret settings such as `AUTO_PUBLISH` and `LINKEDIN_AUTHOR_TYPE`. The workflow never echoes secret values.
+`.github/workflows/daily_ai_news.yml` installs the pinned dependencies, runs pytest, runs Ruff, and then runs the pipeline daily at 09:00 UTC or through `workflow_dispatch`. Add GitHub Secrets `GEMINI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`. Add repository variables `AUTO_PUBLISH` and `LINKEDIN_AUTHOR_TYPE` only when needed; an unset `AUTO_PUBLISH` resolves to false. The workflow never echoes secret values.
+
+## Approval workflow
+
+The current mode is `AUTO_PUBLISH=false`. The pipeline discovers, verifies, generates, validates, uploads, and stores a post as `PENDING_APPROVAL`, then stops. After approval in Supabase, run `python scripts/publish_approved.py` from an environment with the required platform credentials. The script downloads the image from Storage, skips platforms already marked `PUBLISHED`, records each platform independently, and supports retries.
+
+## Platform setup
+
+LinkedIn later requires `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, and either `LINKEDIN_ORGANIZATION_ID`/a matching organization URN for organization/page mode or a token accepted by `/v2/userinfo` for person mode. Instagram later requires `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, a Professional account, and publishing permissions. These integrations are mock-tested only; no live platform publish is claimed.
 
 ## Extending the project
 
@@ -39,7 +49,8 @@ Add RSS sources in `config/news_sources.yaml`. Improve prompts in `src/ai/prompt
 
 - `No verified, non-duplicate story available`: inspect source enablement, article age, reliability, and recent Supabase records.
 - Gemini JSON errors: inspect the configured model and provider response; the Pydantic schemas intentionally reject malformed content.
-- Instagram image errors: verify the media URL is public and the account is Professional with publishing permissions.
+- Supabase errors: verify the URL, modern server-only secret key, applied migrations, Data API access, and public `social-posts` bucket policy.
+- Instagram image errors: verify the stored public URL is reachable and the account is Professional with publishing permissions.
 - LinkedIn errors: verify the token scopes, author type, organization ID, and configurable API version.
 
 See [CHATGPT.md](CHATGPT.md) for the current handoff state and known limitations.

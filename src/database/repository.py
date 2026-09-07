@@ -20,6 +20,7 @@ class PostRepository:
         return self.client.table("posts").insert(values).execute().data[0]
 
     def update(self, post_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        values = {**values, "updated_at": datetime.now(timezone.utc).isoformat()}
         return self.client.table("posts").update(values).eq("id", post_id).execute().data[0]
 
     def approved_unpublished(self) -> list[Any]:

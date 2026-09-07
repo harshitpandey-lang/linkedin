@@ -56,9 +56,10 @@ def run_pipeline(settings, provider: AIProvider, repository: PostRepository, dis
     if selected is None:
         raise RuntimeError("No verified, non-duplicate story available")
     story, evaluation, evidence = selected
-    content = provider.generate_content(story)
+    content = provider.generate_content(story, evidence)
     claims = "\n".join([content.headline, content.short_explanation, content.why_it_matters, content.key_takeaway, content.linkedin_caption, content.instagram_caption])
-    if not provider.verify_evidence(story, evidence, claims).verified:
+    content_verification = provider.verify_evidence(story, evidence, claims)
+    if not content_verification.verified:
         raise RuntimeError("Generated content contains unsupported claims")
     image_path = generate_image(content, settings.root / "artifacts" / f"{run_id}.png", settings.image, settings.brand)
     valid, reason = validate_image(image_path, settings.image.get("width", 1080), settings.image.get("height", 1080))
@@ -68,7 +69,7 @@ def run_pipeline(settings, provider: AIProvider, repository: PostRepository, dis
         raise RuntimeError("ImageStorage is required; local artifacts are not permanent media")
     storage_path = storage.storage_path_for(run_id)
     public_url = storage.upload(image_path, storage_path)
-    record = repository.create({"run_id": run_id, "news_title": story.title, "news_summary": story.summary, "news_url": str(story.source_url), "news_source": story.source_name, "news_published_at": story.published_at.isoformat() if story.published_at else None, "ai_score": evaluation.total, "credibility_score": evaluation.credibility, "usefulness_score": evaluation.usefulness, "novelty_score": evaluation.novelty, "headline": content.headline, "short_explanation": content.short_explanation, "why_it_matters": content.why_it_matters, "key_takeaway": content.key_takeaway, "linkedin_caption": content.linkedin_caption, "instagram_caption": content.instagram_caption, "hashtags": content.hashtags, "status": "PENDING_APPROVAL" if not settings.auto_publish else "STORED", "approval_status": "APPROVED" if settings.auto_publish else "PENDING", "image_storage_path": storage_path, "image_public_url": public_url, "created_at": datetime.now(timezone.utc).isoformat()})
+    record = repository.create({"run_id": run_id, "news_title": story.title, "news_summary": story.summary, "news_url": str(story.source_url), "news_source": story.source_name, "news_published_at": story.published_at.isoformat() if story.published_at else None, "ai_score": evaluation.total, "credibility_score": evaluation.credibility, "usefulness_score": evaluation.usefulness, "novelty_score": evaluation.novelty, "headline": content.headline, "short_explanation": content.short_explanation, "why_it_matters": content.why_it_matters, "key_takeaway": content.key_takeaway, "linkedin_caption": content.linkedin_caption, "instagram_caption": content.instagram_caption, "hashtags": content.hashtags, "status": "PENDING_APPROVAL" if not settings.auto_publish else "STORED", "approval_status": "APPROVED" if settings.auto_publish else "PENDING", "evidence_verified": True, "evidence_reason": content_verification.reason, "image_storage_path": storage_path, "image_public_url": public_url, "created_at": datetime.now(timezone.utc).isoformat()})
     if not settings.auto_publish:
         return record["id"]
     active = {name: value for name, value in (publishers or {}).items() if name in settings.app.get("enabled_platforms", [])}
