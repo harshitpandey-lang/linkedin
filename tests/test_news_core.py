@@ -144,6 +144,92 @@ def test_gemini_fallback_selects_stable_text_model():
     assert GeminiProvider._select_fallback(models) == "models/gemini-2.5-flash"
 
 
+def test_gemini_404_falls_back_to_untried_latest_flash(monkeypatch):
+    requests = []
+
+    class Response:
+        def __init__(self, status=200):
+            self.status = status
+
+        def raise_for_status(self):
+            if self.status == 404:
+                raise httpx.HTTPStatusError("not found", request=httpx.Request("POST", "https://example.com"), response=httpx.Response(404))
+
+        def json(self):
+            if self.status == 404:
+                return {}
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    def post(url, **_kwargs):
+        requests.append(url)
+        return Response(404 if len(requests) == 1 else 200)
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", post)
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_model_details", lambda _provider: [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/gemini-flash-latest", "displayName": "Gemini Flash Latest", "supportedGenerationMethods": ["generateContent"]}])
+
+    assert GeminiProvider("test-key", model="models/gemini-2.5-flash")._json("prompt") == {}
+    assert requests == [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+    ]
+
+
+def test_gemini_fallback_never_selects_failed_resource():
+    models = [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/gemini-flash-latest", "displayName": "Gemini Flash Latest", "supportedGenerationMethods": ["generateContent"]}]
+    assert GeminiProvider._select_fallback(models, {"models/gemini-2.5-flash"}) == "models/gemini-flash-latest"
+
+
+def test_gemini_multiple_404s_advance_through_distinct_resources(monkeypatch):
+    requests = []
+
+    class Response:
+        def __init__(self, status):
+            self.status = status
+
+        def raise_for_status(self):
+            if self.status == 404:
+                raise httpx.HTTPStatusError("not found", request=httpx.Request("POST", "https://example.com"), response=httpx.Response(404))
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    def post(url, **_kwargs):
+        requests.append(url)
+        return Response(404 if len(requests) < 3 else 200)
+
+    details = [{"name": name, "displayName": name, "supportedGenerationMethods": ["generateContent"]} for name in ("models/gemini-2.5-flash", "models/gemini-flash-latest", "models/gemini-2.5-flash-lite")]
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", post)
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_model_details", lambda _provider: details)
+
+    assert GeminiProvider("test-key")._json("prompt") == {}
+    assert [url.split("/v1beta/")[1].split(":")[0] for url in requests] == ["models/gemini-2.5-flash", "models/gemini-flash-latest", "models/gemini-2.5-flash-lite"]
+
+
+def test_gemini_fallback_excludes_unsuitable_resources():
+    models = [{"name": f"models/{name}", "displayName": name, "supportedGenerationMethods": ["generateContent"]} for name in ("gemini-preview-tts", "gemini-image", "gemini-audio", "gemini-live", "gemini-embedding", "gemini-flash-latest")]
+    assert GeminiProvider._select_fallback(models) == "models/gemini-flash-latest"
+
+
+def test_gemini_fallback_exhaustion_reports_attempts_and_compatible_models(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("not found", request=httpx.Request("POST", "https://example.com"), response=httpx.Response(404))
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_model_details", lambda _provider: [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/gemini-flash-latest", "displayName": "Gemini Flash Latest", "supportedGenerationMethods": ["generateContent"]}])
+    try:
+        GeminiProvider("test-key", model="configured-model")._json("prompt")
+    except RuntimeError as error:
+        message = str(error)
+        assert "models/configured-model" in message
+        assert "attempted resources:" in message
+        assert "models/gemini-2.5-flash" in message
+        assert "models/gemini-flash-latest" in message
+        assert "compatible resources discovered:" in message
+    else:
+        raise AssertionError("fallback exhaustion was not reported")
+
+
 def test_gemini_404_reports_model_availability(monkeypatch):
     class NotFound:
         status_code = 404
