@@ -21,7 +21,8 @@ class Settings:
 
     @property
     def auto_publish(self) -> bool:
-        return os.getenv("AUTO_PUBLISH", str(self.app.get("auto_publish", False))).lower() == "true"
+        value = os.getenv("AUTO_PUBLISH") or str(self.app.get("auto_publish", False))
+        return value.lower() == "true"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

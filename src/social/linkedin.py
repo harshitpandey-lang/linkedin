@@ -51,6 +51,8 @@ class LinkedInPublisher:
             payload = {"author": author, "commentary": caption, "visibility": "PUBLIC", "distribution": {"feedDistribution": "MAIN_FEED", "targetEntities": [], "thirdPartyDistributionChannels": []}, "content": {"media": {"id": upload["image"], "altText": "AI news editorial graphic"}}, "lifecycleState": "PUBLISHED", "isReshareDisabledByAuthor": False}
             post = self.client.post("https://api.linkedin.com/rest/posts", headers={**self.headers, "Content-Type": "application/json"}, json=payload)
             post.raise_for_status()
-            return PublishResult(True, post.headers.get("x-restli-id", post.json().get("id", "")))
+            post_data = post.json()
+            post_id = post.headers.get("x-restli-id") or post.headers.get("X-RestLi-Id") or post_data.get("id", "")
+            return PublishResult(True, post_id)
         except (httpx.HTTPError, KeyError, ValueError, OSError) as exc:
             return PublishResult(False, error=str(exc))

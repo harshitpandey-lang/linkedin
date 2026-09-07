@@ -53,6 +53,7 @@ The daily workflow installs dependencies, runs pytest, then runs `python -m src.
 - HTML evidence extraction is deliberately lightweight and may include navigation text or fail on paywalls/JavaScript-rendered pages.
 - The public Storage bucket is necessary for Instagram's URL ingestion; use a carefully scoped bucket policy.
 - LinkedIn API versions and app-product access change; keep `LINKEDIN_API_VERSION` current. Person mode requires a token accepted by `/v2/userinfo` and a `urn:li:person:*` author URN if configured; organization/page mode requires `LINKEDIN_ORGANIZATION_ID` or a `urn:li:organization:*` author URN.
+- LinkedIn post IDs are read case-insensitively from the REST response header, with the response body ID as a fallback for compatible clients and test doubles. An empty `AUTO_PUBLISH` workflow variable resolves to `false`; automatic publishing remains disabled by default.
 - Database schema migration must be applied manually. No live Supabase project was available for a query test.
 
 ## Next steps

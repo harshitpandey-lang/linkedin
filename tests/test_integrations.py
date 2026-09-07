@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from src.database.repository import PostRepository
 from src.database.storage import ImageStorage
+from src.config.loader import Settings
 from src.pipeline.orchestrator import _publish_record
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
@@ -42,6 +43,12 @@ def test_storage_path_and_upload(tmp_path: Path):
     assert storage.upload(image, key) == "https://cdn.example/2026/09/06/run-1.png"
     assert client.bucket.uploaded[0] == key
     assert storage.download(key) == b"image"
+
+
+def test_empty_auto_publish_defaults_to_false(monkeypatch):
+    monkeypatch.setenv("AUTO_PUBLISH", "")
+    settings = Settings(Path("."), {"auto_publish": False}, {}, {}, {}, {}, [])
+    assert settings.auto_publish is False
 
 
 def test_instagram_receives_post_specific_public_url(monkeypatch, tmp_path: Path):
@@ -85,6 +92,24 @@ def test_linkedin_constructs_image_upload_and_post(tmp_path: Path):
     posts = [call for call in client.calls if call[0] == "post"]
     assert posts[0][1][0].endswith("rest/images?action=initializeUpload")
     assert posts[1][2]["json"]["content"]["media"]["id"] == "urn:li:image:1"
+
+
+def test_linkedin_accepts_case_insensitive_restli_id_header(tmp_path: Path):
+    image = tmp_path / "image.png"
+    image.write_bytes(b"png")
+    client = LinkedInClient()
+    original_post = client.post
+
+    def post_with_title_case_header(*args, **kwargs):
+        response = original_post(*args, **kwargs)
+        if args[0].endswith("/rest/posts"):
+            response.headers = {"X-RestLi-Id": "urn:li:share:1"}
+        return response
+
+    client.post = post_with_title_case_header
+    result = LinkedInPublisher(token="token", client=client).publish("caption", image)
+    assert result.success
+    assert result.post_id == "urn:li:share:1"
 
 
 def test_linkedin_resolves_organization_and_page_authors():
