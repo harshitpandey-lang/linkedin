@@ -53,26 +53,23 @@ def test_empty_auto_publish_defaults_to_false(monkeypatch):
 
 
 def test_supabase_client_accepts_modern_secret_key(monkeypatch):
-    captured = {}
-
-    class FakeOptions:
-        headers = {}
-
-    class FakeClient:
-        options = FakeOptions()
-        supabase_key = ""
-
-    def fake_create_client(url, key):
-        captured["url"], captured["key"] = url, key
-        return FakeClient()
-
-    monkeypatch.setattr(supabase_client, "create_client", fake_create_client)
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_test_only")
     client = supabase_client.get_client()
-    assert captured == {"url": "https://example.supabase.co", "key": supabase_client._BOOTSTRAP_KEY}
+    assert client.supabase_url.host == "example.supabase.co"
     assert client.supabase_key == "sb_secret_test_only"
     assert client.options.headers["apiKey"] == "sb_secret_test_only"
+
+
+def test_supabase_database_and_storage_clients_use_modern_secret_key(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_test_only")
+    client = supabase_client.get_client()
+    database = client.table("posts")
+    storage = client.storage.from_("social-posts")
+    assert database is not None
+    assert storage._headers["apikey"] == "sb_secret_test_only"
+    assert storage._headers["authorization"] == "Bearer sb_secret_test_only"
 
 
 def test_instagram_receives_post_specific_public_url(monkeypatch, tmp_path: Path):
