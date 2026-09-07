@@ -13,12 +13,12 @@ from src.pipeline.orchestrator import run_pipeline
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=os.getenv("LOG_LEVEL") or "INFO", format="%(asctime)s %(levelname)s %(message)s")
 
 
 def main() -> None:
     settings = load_settings()
-    provider = GeminiProvider(os.environ["GEMINI_API_KEY"], settings.ai.get("model", os.getenv("GEMINI_MODEL", "gemini-2.0-flash")))
+    provider = GeminiProvider(os.environ["GEMINI_API_KEY"], settings.ai.get("model") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash")
     publishers = {}
     if settings.auto_publish:
         if "linkedin" in settings.app.get("enabled_platforms", []):

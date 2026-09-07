@@ -55,6 +55,8 @@ The daily workflow installs dependencies, runs pytest, then runs `python -m src.
 - LinkedIn API versions and app-product access change; keep `LINKEDIN_API_VERSION` current. Person mode requires a token accepted by `/v2/userinfo` and a `urn:li:person:*` author URN if configured; organization/page mode requires `LINKEDIN_ORGANIZATION_ID` or a `urn:li:organization:*` author URN.
 - LinkedIn post IDs are read case-insensitively from the REST response header, with the response body ID as a fallback for compatible clients and test doubles. An empty `AUTO_PUBLISH` workflow variable resolves to `false`; automatic publishing remains disabled by default.
 - When `AUTO_PUBLISH=false`, `src.main` does not construct LinkedIn or Instagram publishers, so those platform credentials are not required for approval-mode pipeline runs.
+- GitHub Actions can expose unset optional variables as empty strings. LinkedIn now treats empty `LINKEDIN_AUTHOR_TYPE` and `LINKEDIN_API_VERSION` as unset defaults, and the application applies the same empty-safe fallback to `LOG_LEVEL` and `GEMINI_MODEL`.
+- The LinkedIn integration fixture now returns upload metadata only from `initializeUpload` and returns `x-restli-id: urn:li:share:1` only from `/rest/posts`. This prevents a successful mock response from losing its post ID while preserving the complete image-publishing flow.
 - Database schema migration must be applied manually. No live Supabase project was available for a query test.
 
 ## Next steps

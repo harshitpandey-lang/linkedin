@@ -77,7 +77,9 @@ class LinkedInClient:
         return FakeResponse({"sub": "member-1"})
     def post(self, *args, **kwargs):
         self.calls.append(("post", args, kwargs))
-        return FakeResponse({"value": {"uploadUrl": "https://upload.example", "image": "urn:li:image:1"}} if "images" in args[0] else {}, {"x-restli-id": "urn:li:share:1"})
+        if "images" in args[0]:
+            return FakeResponse({"value": {"uploadUrl": "https://upload.example", "image": "urn:li:image:1"}})
+        return FakeResponse({}, {"x-restli-id": "urn:li:share:1"})
     def put(self, *args, **kwargs):
         self.calls.append(("put", args, kwargs))
         return FakeResponse()
@@ -92,6 +94,12 @@ def test_linkedin_constructs_image_upload_and_post(tmp_path: Path):
     posts = [call for call in client.calls if call[0] == "post"]
     assert posts[0][1][0].endswith("rest/images?action=initializeUpload")
     assert posts[1][2]["json"]["content"]["media"]["id"] == "urn:li:image:1"
+
+
+def test_empty_linkedin_author_type_defaults_to_person(monkeypatch):
+    monkeypatch.setenv("LINKEDIN_AUTHOR_TYPE", "")
+    publisher = LinkedInPublisher(token="token", client=LinkedInClient())
+    assert publisher.author_type == "person"
 
 
 def test_linkedin_accepts_case_insensitive_restli_id_header(tmp_path: Path):

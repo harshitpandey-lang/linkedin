@@ -10,10 +10,10 @@ class LinkedInPublisher:
     """Publish a generated PNG through LinkedIn's current Images and Posts APIs."""
     def __init__(self, token=None, author_type=None, organization_id=None, author_urn=None, api_version=None, client=None):
         self.token = token or os.environ["LINKEDIN_ACCESS_TOKEN"]
-        self.author_type = author_type or os.getenv("LINKEDIN_AUTHOR_TYPE", "person")
+        self.author_type = author_type or os.getenv("LINKEDIN_AUTHOR_TYPE") or "person"
         self.organization_id = organization_id or os.getenv("LINKEDIN_ORGANIZATION_ID", "")
         self.author_urn = author_urn or os.getenv("LINKEDIN_AUTHOR_URN", "")
-        self.api_version = api_version or os.getenv("LINKEDIN_API_VERSION", "202606")
+        self.api_version = api_version or os.getenv("LINKEDIN_API_VERSION") or "202606"
         self.client = client or httpx.Client(timeout=30)
 
     @property
