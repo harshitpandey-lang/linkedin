@@ -33,6 +33,14 @@ def test_story_verification_requires_source_evidence():
     assert not verify_story(story, provider=object(), evidence="").verified
 
 
+def test_source_evidence_skips_unreadable_response(monkeypatch):
+    story = NewsStory(title="Unreadable news", source_name="Example", source_url="https://example.com/news")
+    monkeypatch.setattr("src.news.verification.httpx.get", lambda *_args, **_kwargs: (_ for _ in ()).throw(UnicodeError("invalid response")))
+    from src.news.verification import obtain_evidence
+
+    assert obtain_evidence(story) == ""
+
+
 def test_discovery_skips_unavailable_source(monkeypatch):
     def fail(*_args, **_kwargs):
         raise RuntimeError("unavailable")

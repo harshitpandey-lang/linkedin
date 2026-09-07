@@ -32,7 +32,7 @@ def obtain_evidence(story: NewsStory, timeout: float = 20) -> str:
         parser = _TextExtractor()
         parser.feed(response.text)
         return " ".join(parser.parts)[:12000]
-    except httpx.HTTPError:
+    except (httpx.HTTPError, UnicodeError, ValueError):
         return ""
 
 
