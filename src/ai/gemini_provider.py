@@ -18,27 +18,52 @@ class GeminiProvider:
         self.api_key, self.model, self.timeout, self.retries = api_key, model, timeout, max(1, retries)
 
     @property
-    def _model_name(self) -> str:
-        return self.model.removeprefix("models/")
+    def _model_resource(self) -> str:
+        return self.model if self.model.startswith("models/") else f"models/{self.model}"
 
-    def available_models(self) -> list[str]:
+    @property
+    def _model_name(self) -> str:
+        return self._model_resource.removeprefix("models/")
+
+    def available_model_details(self) -> list[dict[str, object]]:
         response = httpx.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
             headers={"x-goog-api-key": self.api_key},
             timeout=self.timeout,
         )
         response.raise_for_status()
-        models = response.json().get("models", [])
-        return [
-            item["name"].removeprefix("models/")
-            for item in models
-            if "generateContent" in item.get("supportedGenerationMethods", []) and item.get("name")
-        ]
+        details = []
+        for item in response.json().get("models", []):
+            name = item.get("name")
+            methods = item.get("supportedGenerationMethods", [])
+            if isinstance(name, str) and isinstance(methods, list) and "generateContent" in methods:
+                details.append({"name": name if name.startswith("models/") else f"models/{name}", "displayName": item.get("displayName", ""), "supportedGenerationMethods": methods})
+        return details
+
+    def available_models(self) -> list[str]:
+        return [str(item["name"]) for item in self.available_model_details()]
+
+    @staticmethod
+    def _select_fallback(models: list[dict[str, object]]) -> str | None:
+        candidates = []
+        for item in models:
+            name = str(item["name"])
+            label = f"{name} {item.get('displayName', '')}".lower()
+            if any(term in label for term in ("tts", "image", "embedding", "live", "audio")):
+                continue
+            candidates.append(name)
+        preferred = ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-pro-latest")
+        for target in preferred:
+            match = next((name for name in candidates if name.removeprefix("models/") == target), None)
+            if match:
+                return match
+        return candidates[0] if candidates else None
 
     def _json(self, prompt: str) -> dict:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent"
+        configured_resource = self._model_resource
         for attempt in range(self.retries):
             try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/{self._model_resource}:generateContent"
                 response = httpx.post(url, headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}}, timeout=self.timeout)
                 response.raise_for_status()
                 text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -50,12 +75,17 @@ class GeminiProvider:
                 status = exc.response.status_code
                 if status == 404:
                     try:
-                        available = self.available_models()
+                        details = self.available_model_details()
                     except (httpx.HTTPError, KeyError, TypeError, ValueError) as discovery_error:
-                        available = []
+                        details = []
                         logger.warning("Could not discover Gemini models after a 404: %s", discovery_error)
-                    options = ", ".join(available[:10]) or "none returned for this API key"
-                    raise RuntimeError(f"Gemini model '{self._model_name}' is unavailable (HTTP 404). Use GEMINI_MODEL with a model that supports generateContent; available models: {options}") from exc
+                    fallback = self._select_fallback(details)
+                    if fallback and fallback != self._model_resource and attempt == 0:
+                        logger.warning("Gemini model %s was unavailable; retrying with discovered model %s", self._model_resource, fallback)
+                        self.model = fallback
+                        continue
+                    options = ", ".join(str(item["name"]) for item in details[:10]) or "none returned for this API key"
+                    raise RuntimeError(f"Gemini model resource '{configured_resource}' is unavailable (HTTP 404); attempted fallback '{self._model_resource}'. Use GEMINI_MODEL with a resource supporting generateContent; available resources: {options}") from exc
                 if status not in {429, 500, 502, 503, 504} or attempt == self.retries - 1:
                     logger.error("Gemini request failed for model %s with status %s", self._model_name, status)
                     raise RuntimeError(f"Gemini request failed for model {self._model_name} with status {status}") from exc

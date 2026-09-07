@@ -76,6 +76,25 @@ def test_gemini_uses_current_model_and_api_key_header(monkeypatch):
     assert requests[0][1]["headers"]["x-goog-api-key"] == "test-key"
 
 
+def test_gemini_model_resource_names_build_one_models_prefix(monkeypatch):
+    requests = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *args, **kwargs: requests.append(args[0]) or Response())
+    GeminiProvider("test-key", model="models/gemini-2.5-flash")._json("prompt")
+    GeminiProvider("test-key", model="gemini-2.5-flash")._json("prompt")
+    assert requests == [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    ]
+
+
 def test_main_prefers_gemini_model_environment(monkeypatch):
     captured = {}
     settings = SimpleNamespace(auto_publish=False, app={"enabled_platforms": [], "retry_attempts": 1}, ai={"model": "yaml-model"}, storage={})
@@ -103,10 +122,18 @@ def test_gemini_discovers_generate_content_models(monkeypatch):
             return None
 
         def json(self):
-            return {"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/embedding", "supportedGenerationMethods": ["embedContent"]}]}
+            return {"models": [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "gemini-2.5-flash-preview-tts", "displayName": "TTS", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/embedding", "displayName": "Embedding", "supportedGenerationMethods": ["embedContent"]}]}
 
     monkeypatch.setattr("src.ai.gemini_provider.httpx.get", lambda *args, **kwargs: Response())
-    assert GeminiProvider("test-key").available_models() == ["gemini-2.5-flash"]
+    assert GeminiProvider("test-key").available_models() == ["models/gemini-2.5-flash", "models/gemini-2.5-flash-preview-tts"]
+
+
+def test_gemini_fallback_selects_stable_text_model():
+    models = [
+        {"name": "models/gemini-2.5-flash-preview-tts", "displayName": "TTS", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]},
+    ]
+    assert GeminiProvider._select_fallback(models) == "models/gemini-2.5-flash"
 
 
 def test_gemini_404_reports_model_availability(monkeypatch):
@@ -118,12 +145,12 @@ def test_gemini_404_reports_model_availability(monkeypatch):
             raise httpx.HTTPStatusError("not found", request=httpx.Request("POST", "https://example.com"), response=NotFound())
 
     monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *args, **kwargs: Response())
-    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_models", lambda _provider: ["gemini-2.5-flash"])
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_model_details", lambda _provider: [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]}])
     try:
         GeminiProvider("test-key", model="retired-model")._json("prompt")
     except RuntimeError as error:
-        assert "retired-model" in str(error)
-        assert "gemini-2.5-flash" in str(error)
+        assert "models/retired-model" in str(error)
+        assert "models/gemini-2.5-flash" in str(error)
     else:
         raise AssertionError("404 model failure was not reported")
 

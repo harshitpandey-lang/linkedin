@@ -21,7 +21,7 @@ The service-role key is server-side only. Never commit `.env` or print secrets.
 
 Supported environment variables are `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_TYPE`, `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_AUTHOR_URN`, `LINKEDIN_API_VERSION`, `META_APP_ID`, `META_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID`, `AUTO_PUBLISH`, and `LOG_LEVEL`.
 
-The default Gemini model is the stable `gemini-2.5-flash`, which supports `generateContent`. Set `GEMINI_MODEL` to another model returned by the Gemini Developer API `models.list` endpoint with `generateContent` in `supportedGenerationMethods`. A model 404 reports the configured model and discovered compatible alternatives.
+The default Gemini model is the stable `gemini-2.5-flash`, which supports `generateContent`. Set `GEMINI_MODEL` to another model returned by the Gemini Developer API `models.list` endpoint with `generateContent` in `supportedGenerationMethods`; both `gemini-...` and `models/gemini-...` forms are accepted. A model 404 discovers compatible resources, excludes TTS/image/embedding/live variants, and retries with the best stable text model before reporting both the configured and attempted resources.
 
 `SUPABASE_SERVICE_ROLE_KEY` keeps its existing name for workflow compatibility but contains the server-only modern `sb_secret_...` key. `AUTO_PUBLISH` defaults to false, including when the environment value is empty. Optional values treat empty strings as unset.
 
