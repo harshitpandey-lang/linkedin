@@ -8,7 +8,7 @@ app:
   auto_publish: false
 ai:
   provider: gemini
-  model: gemini-2.0-flash
+  model: gemini-2.5-flash
 image:
   mode: programmatic
   width: 1080

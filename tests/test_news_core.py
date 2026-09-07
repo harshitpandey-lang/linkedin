@@ -6,7 +6,7 @@ from src.news.models import GeneratedContent, NewsStory
 from src.news.normalization import normalize_entry
 from src.news.verification import verify_story
 from src.news.discovery import discover_sources
-from src.ai.gemini_provider import GeminiProvider
+from src.ai.gemini_provider import DEFAULT_GEMINI_MODEL, GeminiProvider
 from src.pipeline.orchestrator import run_pipeline
 
 
@@ -56,6 +56,76 @@ def test_gemini_reports_malformed_json(monkeypatch):
         assert "Gemini response could not be validated" in str(error)
     else:
         raise AssertionError("malformed Gemini JSON was accepted")
+
+
+def test_gemini_uses_current_model_and_api_key_header(monkeypatch):
+    requests = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *args, **kwargs: requests.append((args, kwargs)) or Response())
+    provider = GeminiProvider("test-key")
+    assert provider.model == DEFAULT_GEMINI_MODEL == "gemini-2.5-flash"
+    assert provider._json("prompt") == {}
+    assert requests[0][0][0].endswith("/models/gemini-2.5-flash:generateContent")
+    assert requests[0][1]["headers"]["x-goog-api-key"] == "test-key"
+
+
+def test_main_prefers_gemini_model_environment(monkeypatch):
+    captured = {}
+    settings = SimpleNamespace(auto_publish=False, app={"enabled_platforms": [], "retry_attempts": 1}, ai={"model": "yaml-model"}, storage={})
+    monkeypatch.setattr("src.main.load_settings", lambda: settings)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "env-model")
+
+    def provider(*args, **kwargs):
+        captured["model"] = args[1]
+        return object()
+
+    monkeypatch.setattr("src.main.GeminiProvider", provider)
+    monkeypatch.setattr("src.main.get_client", lambda: object())
+    monkeypatch.setattr("src.main.ImageStorage", lambda *_args: object())
+    monkeypatch.setattr("src.main.PostRepository", lambda *_args: object())
+    monkeypatch.setattr("src.main.run_pipeline", lambda *_args: "post-1")
+    from src.main import main
+    main()
+    assert captured["model"] == "env-model"
+
+
+def test_gemini_discovers_generate_content_models(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]}, {"name": "models/embedding", "supportedGenerationMethods": ["embedContent"]}]}
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.get", lambda *args, **kwargs: Response())
+    assert GeminiProvider("test-key").available_models() == ["gemini-2.5-flash"]
+
+
+def test_gemini_404_reports_model_availability(monkeypatch):
+    class NotFound:
+        status_code = 404
+
+    class Response:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("not found", request=httpx.Request("POST", "https://example.com"), response=NotFound())
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", lambda *args, **kwargs: Response())
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_models", lambda _provider: ["gemini-2.5-flash"])
+    try:
+        GeminiProvider("test-key", model="retired-model")._json("prompt")
+    except RuntimeError as error:
+        assert "retired-model" in str(error)
+        assert "gemini-2.5-flash" in str(error)
+    else:
+        raise AssertionError("404 model failure was not reported")
 
 
 def test_gemini_retries_rate_limit(monkeypatch):

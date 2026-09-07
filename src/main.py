@@ -4,6 +4,7 @@ import logging
 import os
 
 from src.ai.gemini_provider import GeminiProvider
+from src.ai.gemini_provider import DEFAULT_GEMINI_MODEL
 from src.config.loader import load_settings
 from src.database.repository import PostRepository
 from src.database.storage import ImageStorage
@@ -21,7 +22,7 @@ def main() -> None:
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key:
         raise RuntimeError("GEMINI_API_KEY is required")
-    provider = GeminiProvider(gemini_key, settings.ai.get("model") or os.getenv("GEMINI_MODEL") or "gemini-2.0-flash", retries=settings.app.get("retry_attempts", 3))
+    provider = GeminiProvider(os.environ["GEMINI_API_KEY"], os.getenv("GEMINI_MODEL") or settings.ai.get("model") or DEFAULT_GEMINI_MODEL, retries=settings.app.get("retry_attempts", 3))
     publishers = {}
     if settings.auto_publish:
         if "linkedin" in settings.app.get("enabled_platforms", []):
