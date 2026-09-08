@@ -7,7 +7,7 @@ from src.news.models import GeneratedContent, NewsStory
 from src.news.normalization import normalize_entry
 from src.news.verification import verify_story
 from src.news.discovery import discover_sources
-from src.ai.gemini_provider import DEFAULT_GEMINI_MODEL, GeminiProvider
+from src.ai.gemini_provider import AIOutputError, DEFAULT_GEMINI_MODEL, GeminiProvider
 from src.pipeline.orchestrator import run_pipeline
 
 
@@ -271,6 +271,39 @@ def test_gemini_retries_rate_limit(monkeypatch):
     assert len(attempts) == 2
 
 
+def test_gemini_advances_to_fallback_after_transient_retries_are_exhausted(monkeypatch):
+    requests = []
+
+    class Response:
+        def __init__(self, status):
+            self.status = status
+
+        def raise_for_status(self):
+            if self.status != 200:
+                raise httpx.HTTPStatusError("temporary failure", request=httpx.Request("POST", "https://example.com"), response=httpx.Response(self.status))
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    def post(url, **_kwargs):
+        requests.append(url)
+        return Response(429 if "gemini-2.5-flash:" in url else 200)
+
+    monkeypatch.setattr("src.ai.gemini_provider.httpx.post", post)
+    monkeypatch.setattr("src.ai.gemini_provider.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("src.ai.gemini_provider.GeminiProvider.available_model_details", lambda _provider: [
+        {"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-flash-latest", "displayName": "Gemini Flash Latest", "supportedGenerationMethods": ["generateContent"]},
+    ])
+
+    assert GeminiProvider("test-key", retries=2)._json("prompt") == {}
+    assert [url.split("/v1beta/")[1].split(":")[0] for url in requests] == [
+        "models/gemini-2.5-flash",
+        "models/gemini-2.5-flash",
+        "models/gemini-flash-latest",
+    ]
+
+
 def test_pipeline_stores_verified_pending_record(tmp_path, monkeypatch):
     story = NewsStory(title="A verified AI story", summary="Source summary", source_name="Example", source_url="https://example.com/story", reliability=0.9, published_at=datetime.now(timezone.utc))
     evaluation = SimpleNamespace(total=90, credibility=90, usefulness=80, novelty=85)
@@ -324,3 +357,87 @@ def test_pipeline_stores_verified_pending_record(tmp_path, monkeypatch):
     assert repository.record["approval_status"] == "PENDING"
     assert repository.record["evidence_verified"] is True
     assert repository.record["image_storage_path"].endswith(".png")
+
+
+def test_pipeline_skips_invalid_candidate_output_and_uses_next_candidate(tmp_path, monkeypatch):
+    stories = [
+        NewsStory(title="First AI story", source_name="Example", source_url="https://example.com/first", published_at=datetime.now(timezone.utc)),
+        NewsStory(title="Second AI story", source_name="Example", source_url="https://example.com/second", published_at=datetime.now(timezone.utc)),
+    ]
+    content = GeneratedContent(headline="Verified headline", short_explanation="A factual explanation.", why_it_matters="This matters to builders.", key_takeaway="Check the source.", linkedin_caption="A factual LinkedIn caption with evidence.", instagram_caption="A factual Instagram caption with evidence.", hashtags=["#AI"], image_text="Verified story", image_prompt="Editorial technology graphic")
+
+    class Provider:
+        def evaluate(self, story):
+            if story is stories[0]:
+                raise AIOutputError("bad candidate response")
+            return SimpleNamespace(total=90, credibility=90, usefulness=80, novelty=85)
+
+        def generate_content(self, *_args):
+            return content
+
+        def verify_evidence(self, *_args, **_kwargs):
+            return SimpleNamespace(verified=True, reason="Supported by source")
+
+    class Repository:
+        def recent_posts(self, _days): return []
+        def create(self, values): return {"id": "post-2", **values}
+
+    class Storage:
+        def storage_path_for(self, run_id): return f"{run_id}.png"
+        def upload(self, _path, storage_path): return f"https://cdn.example/{storage_path}"
+
+    monkeypatch.setattr("src.pipeline.orchestrator.obtain_evidence", lambda *_args: "source evidence")
+    monkeypatch.setattr("src.pipeline.orchestrator.verify_story", lambda *_args: SimpleNamespace(verified=True, reason="verified"))
+    monkeypatch.setattr("src.pipeline.orchestrator.detect_duplicate", lambda *_args: SimpleNamespace(duplicate=False))
+    def create_image(_content, path, *_args):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png")
+        return path
+
+    monkeypatch.setattr("src.pipeline.orchestrator.generate_image", create_image)
+    monkeypatch.setattr("src.pipeline.orchestrator.validate_image", lambda *_args: (True, ""))
+    settings = SimpleNamespace(root=tmp_path, auto_publish=False, news_sources=[], app={"max_article_age_hours": 48, "max_candidates": 2, "duplicate_window_days": 30, "request_timeout_seconds": 1}, image={}, brand={}, storage={})
+
+    assert run_pipeline(settings, Provider(), Repository(), lambda *_args: stories, storage=Storage()) == "post-2"
+
+
+def test_pipeline_skips_candidate_with_invalid_content_and_uses_next_candidate(tmp_path, monkeypatch):
+    stories = [
+        NewsStory(title="First AI story", source_name="Example", source_url="https://example.com/first", published_at=datetime.now(timezone.utc)),
+        NewsStory(title="Second AI story", source_name="Example", source_url="https://example.com/second", published_at=datetime.now(timezone.utc)),
+    ]
+    content = GeneratedContent(headline="Verified headline", short_explanation="A factual explanation.", why_it_matters="This matters to builders.", key_takeaway="Check the source.", linkedin_caption="A factual LinkedIn caption with evidence.", instagram_caption="A factual Instagram caption with evidence.", hashtags=["#AI"], image_text="Verified story", image_prompt="Editorial technology graphic")
+
+    class Provider:
+        def evaluate(self, _story):
+            return SimpleNamespace(total=90, credibility=90, usefulness=80, novelty=85)
+
+        def generate_content(self, story, _evidence):
+            if story is stories[0]:
+                raise AIOutputError("bad content response")
+            return content
+
+        def verify_evidence(self, *_args, **_kwargs):
+            return SimpleNamespace(verified=True, reason="Supported by source")
+
+    class Repository:
+        def recent_posts(self, _days): return []
+        def create(self, values): return {"id": "post-3", **values}
+
+    class Storage:
+        def storage_path_for(self, run_id): return f"{run_id}.png"
+        def upload(self, _path, storage_path): return f"https://cdn.example/{storage_path}"
+
+    def create_image(_content, path, *_args):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png")
+        return path
+
+    monkeypatch.setattr("src.pipeline.orchestrator.obtain_evidence", lambda *_args: "source evidence")
+    monkeypatch.setattr("src.pipeline.orchestrator.verify_story", lambda *_args: SimpleNamespace(verified=True, reason="verified"))
+    monkeypatch.setattr("src.pipeline.orchestrator.detect_duplicate", lambda *_args: SimpleNamespace(duplicate=False))
+    monkeypatch.setattr("src.pipeline.orchestrator.generate_image", create_image)
+    monkeypatch.setattr("src.pipeline.orchestrator.validate_image", lambda *_args: (True, ""))
+    settings = SimpleNamespace(root=tmp_path, auto_publish=False, news_sources=[], app={"max_article_age_hours": 48, "max_candidates": 2, "duplicate_window_days": 30, "request_timeout_seconds": 1}, image={}, brand={}, storage={})
+
+    assert run_pipeline(settings, Provider(), Repository(), lambda *_args: stories, storage=Storage()) == "post-3"

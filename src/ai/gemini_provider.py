@@ -102,12 +102,11 @@ class GeminiProvider:
         discovered_details: list[dict[str, object]] = []
         discovered = False
         statuses = {}
+        current_resource = configured_resource
         if schema:
             prompt += "\nRequired JSON schema: " + json.dumps(schema.model_json_schema())
         while len(attempted_resources) < 8:
-            current_resource = self._model_resource
             attempted_resources.add(current_resource)
-            fallback_resource = None
             for attempt in range(self.retries):
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/{current_resource}:generateContent"
@@ -123,6 +122,9 @@ class GeminiProvider:
                     logger.warning("Gemini resource=%s status=%s attempt=%s", current_resource, status, attempt + 1)
                     if status not in {404, 429, 500, 502, 503, 504}:
                         raise RuntimeError(f"Gemini request failed for model {current_resource} with status {status}") from None
+                    # A missing model cannot recover by retrying. Transient
+                    # failures get their full retry budget before this model is
+                    # retired and the outer loop selects an untried fallback.
                     if status == 404 or attempt == self.retries - 1:
                         break
                     time.sleep(self._retry_delay(attempt, exc.response))
@@ -147,7 +149,7 @@ class GeminiProvider:
                     logger.warning("Gemini model discovery unavailable")
             fallback_resource = self._select_fallback(discovered_details, attempted_resources)
             if fallback_resource:
-                self.model = fallback_resource
+                current_resource = fallback_resource
                 continue
             break
         attempted = ", ".join(sorted(attempted_resources))

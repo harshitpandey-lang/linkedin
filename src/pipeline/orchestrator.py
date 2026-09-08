@@ -65,12 +65,15 @@ def run_pipeline(settings, provider: AIProvider, repository: PostRepository, dis
         if not detect_duplicate(story, existing).duplicate:
             candidates.append(story)
     evaluated = []
-    for story in candidates[: settings.app.get("max_candidates", 20)]:
+    for candidate_number, story in enumerate(candidates[: settings.app.get("max_candidates", 20)], 1):
         try:
-            logger.info("EVALUATION candidate=%s", len(evaluated) + 1)
+            logger.info("EVALUATION candidate=%s", candidate_number)
             evaluated.append((story, provider.evaluate(story)))
         except (AIOutputError, ValidationError):
-            logger.warning("EVALUATION candidate output invalid; skipping")
+            # Malformed or schema-invalid model output belongs to this story;
+            # preserve the remaining candidates. Transport/auth/provider errors
+            # intentionally propagate as system-level failures.
+            logger.warning("EVALUATION candidate output invalid; skipping candidate=%s", candidate_number)
     selected = None
     for index, (story, evaluation) in enumerate(rank_evaluations(evaluated), 1):
         try:
@@ -90,6 +93,8 @@ def run_pipeline(settings, provider: AIProvider, repository: PostRepository, dis
             selected = (story, evaluation, content, content_verification)
             break
         except (AIOutputError, ValidationError):
+            # An invalid verifier/content response is candidate-specific. Do not
+            # let it prevent another independently sourced story from being used.
             logger.warning("VERIFICATION/CONTENT invalid candidate output; skipping candidate=%s", index)
     if selected is None:
         raise RuntimeError("No verified, non-duplicate story available")
