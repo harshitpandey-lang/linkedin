@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Protocol
+from types import SimpleNamespace
 
 from .models import NewsStory
 
@@ -28,6 +29,8 @@ def detect_duplicate(story: NewsStory, existing_posts: list[ExistingPost], thres
     story_url = str(story.source_url).rstrip("/")
     story_tokens = _tokens(story.title)
     for post in existing_posts:
+        if isinstance(post, dict):
+            post = SimpleNamespace(**post)
         if str(post.news_url).rstrip("/") == story_url:
             return DuplicateMatch(True, "identical source URL", post.news_url)
         post_tokens = _tokens(post.news_title)

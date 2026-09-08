@@ -18,9 +18,18 @@ class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.parts: list[str] = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "noscript"}:
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "noscript"}:
+            self.hidden = max(0, self.hidden - 1)
 
     def handle_data(self, data: str) -> None:
-        if data.strip():
+        if not self.hidden and data.strip():
             self.parts.append(data.strip())
 
 
@@ -29,10 +38,13 @@ def obtain_evidence(story: NewsStory, timeout: float = 20) -> str:
     try:
         response = httpx.get(str(story.source_url), timeout=timeout, follow_redirects=True)
         response.raise_for_status()
+        content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type not in {"text/html", "application/xhtml+xml", "text/plain"}:
+            return ""
         parser = _TextExtractor()
         parser.feed(response.text)
         return " ".join(parser.parts)[:12000]
-    except (httpx.HTTPError, UnicodeError, ValueError):
+    except (httpx.HTTPError, UnicodeError, ValueError, TypeError, LookupError):
         return ""
 
 

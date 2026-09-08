@@ -20,7 +20,7 @@ class NewsStory(BaseModel):
         if self.published_at is None:
             return None
         published = self.published_at if self.published_at.tzinfo else self.published_at.replace(tzinfo=timezone.utc)
-        return max(0, (datetime.now(timezone.utc) - published).total_seconds() / 3600)
+        return (datetime.now(timezone.utc) - published).total_seconds() / 3600
 
 
 class Evaluation(BaseModel):
@@ -52,5 +52,5 @@ class GeneratedContent(BaseModel):
 
 
 class EvidenceVerification(BaseModel):
-    verified: bool
+    verified: bool = Field(strict=True)
     reason: str = ""

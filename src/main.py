@@ -15,6 +15,8 @@ from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL") or "INFO", format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def main() -> None:

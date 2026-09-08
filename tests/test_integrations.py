@@ -11,6 +11,7 @@ from scripts.publish_approved import publish_approved_posts
 from src.pipeline.orchestrator import _publish_record
 from src.social.instagram import InstagramPublisher
 from src.social.linkedin import LinkedInPublisher
+from src.image.programmatic_generator import create_graphic
 
 
 class StorageBucket:
@@ -39,7 +40,7 @@ class StorageClient:
 def test_storage_path_and_upload(tmp_path: Path):
     client = StorageClient()
     image = tmp_path / "source.png"
-    image.write_bytes(b"image")
+    create_graphic("A useful headline", "Evidence supported story", image)
     storage = ImageStorage(client)
     key = storage.storage_path_for("run-1", datetime(2026, 9, 6, tzinfo=timezone.utc))
     assert key == "2026/09/06/run-1.png"

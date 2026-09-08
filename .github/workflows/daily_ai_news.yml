@@ -5,19 +5,18 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: daily-ai-news
+  cancel-in-progress: false
 jobs:
   publish:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
-      LINKEDIN_AUTHOR_TYPE: ${{ vars.LINKEDIN_AUTHOR_TYPE }}
-      LINKEDIN_ORGANIZATION_ID: ${{ secrets.LINKEDIN_ORGANIZATION_ID }}
-      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-      INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
-      AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || 'false' }}
+      AUTO_PUBLISH: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

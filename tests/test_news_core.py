@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timezone
 import httpx
 
 from src.news.duplicate_detection import detect_duplicate
@@ -271,7 +272,7 @@ def test_gemini_retries_rate_limit(monkeypatch):
 
 
 def test_pipeline_stores_verified_pending_record(tmp_path, monkeypatch):
-    story = NewsStory(title="A verified AI story", summary="Source summary", source_name="Example", source_url="https://example.com/story", reliability=0.9)
+    story = NewsStory(title="A verified AI story", summary="Source summary", source_name="Example", source_url="https://example.com/story", reliability=0.9, published_at=datetime.now(timezone.utc))
     evaluation = SimpleNamespace(total=90, credibility=90, usefulness=80, novelty=85)
     content = GeneratedContent(headline="Verified headline", short_explanation="A factual explanation.", why_it_matters="This matters to builders.", key_takeaway="Check the source.", linkedin_caption="A factual LinkedIn caption with evidence.", instagram_caption="A factual Instagram caption with evidence.", hashtags=["#AI"], image_text="Verified story", image_prompt="Editorial technology graphic")
 

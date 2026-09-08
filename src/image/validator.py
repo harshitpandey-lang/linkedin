@@ -9,6 +9,8 @@ def validate_image(path: Path, width: int = 1080, height: int = 1080) -> tuple[b
         return False, "Image is missing or empty"
     try:
         with Image.open(path) as image:
+            if image.format != "PNG":
+                return False, "Expected PNG format"
             if image.size != (width, height):
                 return False, f"Expected {width}x{height}, got {image.size}"
             image.verify()

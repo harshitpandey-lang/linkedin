@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pydantic import BaseModel
 
 import httpx
 
@@ -13,9 +17,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
+class AIOutputError(RuntimeError):
+    """Invalid candidate output after bounded recovery."""
+
+
 class GeminiProvider:
     def __init__(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL, timeout: float = 60, retries: int = 3):
-        self.api_key, self.model, self.timeout, self.retries = api_key, model, timeout, max(1, retries)
+        self.api_key, self.model, self.timeout, self.retries = api_key, model, timeout, min(5, max(1, retries))
 
     @property
     def _model_resource(self) -> str:
@@ -60,11 +68,43 @@ class GeminiProvider:
                 return match
         return candidates[0] if candidates else None
 
-    def _json(self, prompt: str) -> dict:
+    @staticmethod
+    def _retry_delay(attempt: int, response=None) -> float:
+        value = getattr(response, "headers", {}).get("Retry-After", "")
+        try:
+            delay = float(value)
+        except (TypeError, ValueError):
+            try:
+                delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                delay = 2**attempt
+        return min(30, max(0, delay)) if math.isfinite(delay) else 30
+
+    @staticmethod
+    def _parse_payload(response) -> dict:
+        candidate = response.json()["candidates"][0]
+        if candidate.get("finishReason", "STOP") != "STOP":
+            raise ValueError("Incomplete or blocked response")
+        text = "".join(part.get("text", "") for part in candidate["content"]["parts"])
+        start = text.find("{")
+        if start < 0:
+            raise ValueError("Missing JSON object")
+        payload, end = json.JSONDecoder().raw_decode(text[start:])
+        if "{" in text[start + end:]:
+            raise ValueError("Ambiguous multiple JSON objects")
+        if not isinstance(payload, dict):
+            raise ValueError("Expected JSON object")
+        return payload
+
+    def _json(self, prompt: str, schema: type[BaseModel] | None = None) -> dict:
         configured_resource = self._model_resource
         attempted_resources: set[str] = set()
         discovered_details: list[dict[str, object]] = []
-        while True:
+        discovered = False
+        statuses = {}
+        if schema:
+            prompt += "\nRequired JSON schema: " + json.dumps(schema.model_json_schema())
+        while len(attempted_resources) < 8:
             current_resource = self._model_resource
             attempted_resources.add(current_resource)
             fallback_resource = None
@@ -73,52 +113,55 @@ class GeminiProvider:
                     url = f"https://generativelanguage.googleapis.com/v1beta/{current_resource}:generateContent"
                     response = httpx.post(url, headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}}, timeout=self.timeout)
                     response.raise_for_status()
-                    text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-                    payload = json.loads(text)
-                    if not isinstance(payload, dict):
-                        raise ValueError("Gemini returned a non-object JSON response")
+                    payload = self._parse_payload(response)
+                    if schema:
+                        schema.model_validate(payload)
                     return payload
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code
-                    if status == 404:
-                        try:
-                            details = self.available_model_details()
-                            for item in details:
-                                if item["name"] not in {detail["name"] for detail in discovered_details}:
-                                    discovered_details.append(item)
-                        except (httpx.HTTPError, KeyError, TypeError, ValueError) as discovery_error:
-                            logger.warning("Could not discover Gemini models after a 404: %s", discovery_error)
-                        fallback_resource = self._select_fallback(discovered_details, attempted_resources)
-                        if fallback_resource:
-                            logger.warning("Gemini model %s was unavailable; retrying with discovered model %s", current_resource, fallback_resource)
+                    statuses[current_resource] = status
+                    logger.warning("Gemini resource=%s status=%s attempt=%s", current_resource, status, attempt + 1)
+                    if status not in {404, 429, 500, 502, 503, 504}:
+                        raise RuntimeError(f"Gemini request failed for model {current_resource} with status {status}") from None
+                    if status == 404 or attempt == self.retries - 1:
                         break
-                    if status not in {429, 500, 502, 503, 504} or attempt == self.retries - 1:
-                        logger.error("Gemini request failed for model %s with status %s", self._model_name, status)
-                        raise RuntimeError(f"Gemini request failed for model {self._model_name} with status {status}") from exc
-                    time.sleep(2**attempt)
-                except httpx.RequestError as exc:
+                    time.sleep(self._retry_delay(attempt, exc.response))
+                except httpx.RequestError:
+                    statuses[current_resource] = "network failure"
                     if attempt == self.retries - 1:
-                        logger.error("Gemini network request failed for model %s: %s", self.model, exc)
-                        raise RuntimeError(f"Gemini network request failed for model {self.model}") from exc
-                    time.sleep(2**attempt)
-                except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                    logger.error("Gemini response failed validation for model %s: %s", self.model, exc)
-                    raise RuntimeError(f"Gemini response could not be validated for model {self.model}") from exc
+                        break
+                    time.sleep(self._retry_delay(attempt))
+                except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+                    logger.warning("Gemini output invalid resource=%s attempt=%s", current_resource, attempt + 1)
+                    if attempt == self.retries - 1:
+                        raise AIOutputError(f"Gemini response could not be validated for model {current_resource}") from None
+            if not discovered:
+                discovered = True
+                try:
+                    discovered_details = self.available_model_details()
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code in {400, 401, 403}:
+                        raise RuntimeError(f"Gemini discovery failed with status {exc.response.status_code}") from None
+                    logger.warning("Gemini model discovery unavailable")
+                except (httpx.HTTPError, KeyError, TypeError, ValueError):
+                    logger.warning("Gemini model discovery unavailable")
+            fallback_resource = self._select_fallback(discovered_details, attempted_resources)
             if fallback_resource:
                 self.model = fallback_resource
                 continue
-            attempted = ", ".join(sorted(attempted_resources))
-            compatible = ", ".join(str(item["name"]) for item in discovered_details) or "none returned for this API key"
-            raise RuntimeError(f"Gemini model resource '{configured_resource}' and all discovered fallbacks were unavailable (HTTP 404); attempted resources: {attempted}; compatible resources discovered: {compatible}")
+            break
+        attempted = ", ".join(sorted(attempted_resources))
+        compatible = ", ".join(str(item["name"]) for item in discovered_details) or "none"
+        raise RuntimeError(f"Gemini recovery exhausted for {configured_resource}; attempted resources: {attempted}; statuses: {statuses}; compatible resources discovered: {compatible}")
 
     def evaluate(self, story: NewsStory) -> Evaluation:
         prompt = f"{RANKING_PROMPT}\nTitle: {story.title}\nSummary: {story.summary}\nSource: {story.source_name}"
-        return Evaluation.model_validate(self._json(prompt))
+        return Evaluation.model_validate(self._json(prompt, Evaluation))
 
     def generate_content(self, story: NewsStory, evidence: str = "") -> GeneratedContent:
         prompt = f"{CONTENT_PROMPT}\nTitle: {story.title}\nSummary: {story.summary}\nEvidence: {evidence or story.raw_content}\nSource URL: {story.source_url}"
-        return GeneratedContent.model_validate(self._json(prompt))
+        return GeneratedContent.model_validate(self._json(prompt, GeneratedContent))
 
     def verify_evidence(self, story: NewsStory, evidence: str, claims: str = "") -> EvidenceVerification:
         prompt = f"{VERIFICATION_PROMPT}\nTitle: {story.title}\nSource URL: {story.source_url}\nEvidence:\n{evidence}\nClaims to check:\n{claims or story.summary}"
-        return EvidenceVerification.model_validate(self._json(prompt))
+        return EvidenceVerification.model_validate(self._json(prompt, EvidenceVerification))

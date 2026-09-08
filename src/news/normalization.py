@@ -21,12 +21,12 @@ def _parse_date(value: Any) -> datetime | None:
 
 
 def normalize_entry(entry: dict[str, Any], source: dict[str, Any]) -> NewsStory:
-    summary = str(entry.get("summary", entry.get("description", ""))).strip()
+    summary = str(entry.get("summary") or entry.get("description") or "").strip()
     return NewsStory(
         title=str(entry.get("title", "")).strip(),
         summary=summary,
         source_name=source["name"],
-        source_url=entry.get("link") or entry.get("url") or source["url"],
+        source_url=entry.get("link") or entry.get("url"),
         published_at=_parse_date(entry.get("published") or entry.get("published_at") or entry.get("updated")),
         author=str(entry.get("author", "")).strip(),
         category=source.get("category", "AI"),

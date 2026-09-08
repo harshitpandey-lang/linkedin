@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import uuid
+import logging
+import os
+import hashlib
+from pydantic import ValidationError
+from src.ai.gemini_provider import AIOutputError
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
@@ -12,10 +17,12 @@ from src.image.generator import generate_image
 from src.image.validator import validate_image
 from src.news.duplicate_detection import detect_duplicate
 from src.news.filtering import filter_recent
-from src.news.models import NewsStory
 from src.news.ranking import rank_evaluations
 from src.news.verification import obtain_evidence, verify_story
 from src.social.base import Publisher
+
+
+logger = logging.getLogger(__name__)
 
 
 def _publish_record(repository, record, publishers, image_path, image_public_url):
@@ -33,44 +40,76 @@ def _publish_record(repository, record, publishers, image_path, image_public_url
 
 
 def run_pipeline(settings, provider: AIProvider, repository: PostRepository, discover, publishers: dict[str, Publisher] | None = None, storage: ImageStorage | None = None) -> str:
-    run_id = str(uuid.uuid4())
+    workflow_run = os.getenv("GITHUB_RUN_ID")
+    workflow_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "github:" + os.getenv("GITHUB_REPOSITORY", "") + ":" + workflow_run)) if workflow_run else None
+    if workflow_id and not settings.auto_publish:
+        prior = repository.find_by_run_id(workflow_id)
+        if prior:
+            logger.info("COMPLETE existing post_id=%s status=%s approval_status=%s social_calls=0", prior["id"], prior["status"], prior["approval_status"])
+            return prior["id"]
+    logger.info("DISCOVERY starting; auto_publish=%s", settings.auto_publish)
     stories = filter_recent(discover(settings.news_sources, settings.app.get("request_timeout_seconds", 20)), settings.app.get("max_article_age_hours", 48))
     if settings.auto_publish and storage:
         active = {name: value for name, value in (publishers or {}).items() if name in settings.app.get("enabled_platforms", [])}
         for story in stories:
             existing_record = repository.find_by_news_url(str(story.source_url))
-            if existing_record and existing_record.get("status") != "PUBLISHED" and existing_record.get("image_storage_path"):
+            if existing_record and existing_record.get("approval_status") == "APPROVED" and existing_record.get("status") != "PUBLISHED" and existing_record.get("image_storage_path"):
                 with tempfile.NamedTemporaryFile(suffix=".png") as image:
                     image.write(storage.download(existing_record["image_storage_path"]))
                     image.flush()
                     _publish_record(repository, existing_record, active, Path(image.name), existing_record.get("image_public_url", ""))
                 return existing_record["id"]
-    evaluated = rank_evaluations([(story, provider.evaluate(story)) for story in stories[: settings.app.get("max_candidates", 20)]])
     existing = repository.recent_posts(settings.app.get("duplicate_window_days", 30))
-    selected: tuple[NewsStory, object, str] | None = None
-    for story, evaluation in evaluated:
-        evidence = obtain_evidence(story, settings.app.get("request_timeout_seconds", 20))
-        if verify_story(story, provider, evidence).verified and not detect_duplicate(story, existing).duplicate:
-            selected = (story, evaluation, evidence)
+    candidates = []
+    for story in stories:
+        if not detect_duplicate(story, existing).duplicate:
+            candidates.append(story)
+    evaluated = []
+    for story in candidates[: settings.app.get("max_candidates", 20)]:
+        try:
+            logger.info("EVALUATION candidate=%s", len(evaluated) + 1)
+            evaluated.append((story, provider.evaluate(story)))
+        except (AIOutputError, ValidationError):
+            logger.warning("EVALUATION candidate output invalid; skipping")
+    selected = None
+    for index, (story, evaluation) in enumerate(rank_evaluations(evaluated), 1):
+        try:
+            logger.info("EVIDENCE candidate=%s", index)
+            evidence = obtain_evidence(story, settings.app.get("request_timeout_seconds", 20))
+            logger.info("VERIFICATION candidate=%s evidence_chars=%s", index, len(evidence))
+            if not verify_story(story, provider, evidence).verified:
+                continue
+            logger.info("CONTENT candidate=%s", index)
+            content = provider.generate_content(story, evidence)
+            claims = "\n".join([content.headline, content.short_explanation, content.why_it_matters, content.key_takeaway, content.linkedin_caption, content.instagram_caption, content.image_text, *content.hashtags])
+            logger.info("CLAIM VERIFICATION candidate=%s", index)
+            content_verification = provider.verify_evidence(story, evidence, claims)
+            if not content_verification.verified:
+                logger.warning("CLAIM VERIFICATION rejected candidate=%s", index)
+                continue
+            selected = (story, evaluation, content, content_verification)
             break
+        except (AIOutputError, ValidationError):
+            logger.warning("VERIFICATION/CONTENT invalid candidate output; skipping candidate=%s", index)
     if selected is None:
         raise RuntimeError("No verified, non-duplicate story available")
-    story, evaluation, evidence = selected
-    content = provider.generate_content(story, evidence)
-    claims = "\n".join([content.headline, content.short_explanation, content.why_it_matters, content.key_takeaway, content.linkedin_caption, content.instagram_caption])
-    content_verification = provider.verify_evidence(story, evidence, claims)
-    if not content_verification.verified:
-        raise RuntimeError("Generated content contains unsupported claims")
+    story, evaluation, content, content_verification = selected
+    run_id = workflow_id or str(uuid.uuid5(uuid.NAMESPACE_URL, str(story.source_url)))
+    logger.info("SELECTION complete run_id=%s", run_id)
+    logger.info("IMAGE generating 1080x1080 PNG")
     image_path = generate_image(content, settings.root / "artifacts" / f"{run_id}.png", settings.image, settings.brand)
     valid, reason = validate_image(image_path, settings.image.get("width", 1080), settings.image.get("height", 1080))
     if not valid:
         raise RuntimeError(reason)
     if storage is None:
         raise RuntimeError("ImageStorage is required; local artifacts are not permanent media")
-    storage_path = storage.storage_path_for(run_id)
+    storage_path = storage.storage_path_for(run_id + "-" + hashlib.sha256(image_path.read_bytes()).hexdigest()[:16])
+    logger.info("STORAGE uploading validated image")
     public_url = storage.upload(image_path, storage_path)
+    logger.info("DATABASE creating post")
     record = repository.create({"run_id": run_id, "news_title": story.title, "news_summary": story.summary, "news_url": str(story.source_url), "news_source": story.source_name, "news_published_at": story.published_at.isoformat() if story.published_at else None, "ai_score": evaluation.total, "credibility_score": evaluation.credibility, "usefulness_score": evaluation.usefulness, "novelty_score": evaluation.novelty, "headline": content.headline, "short_explanation": content.short_explanation, "why_it_matters": content.why_it_matters, "key_takeaway": content.key_takeaway, "linkedin_caption": content.linkedin_caption, "instagram_caption": content.instagram_caption, "hashtags": content.hashtags, "status": "PENDING_APPROVAL" if not settings.auto_publish else "STORED", "approval_status": "APPROVED" if settings.auto_publish else "PENDING", "evidence_verified": True, "evidence_reason": content_verification.reason, "image_storage_path": storage_path, "image_public_url": public_url, "created_at": datetime.now(timezone.utc).isoformat()})
     if not settings.auto_publish:
+        logger.info("COMPLETE post_id=%s status=%s approval_status=%s social_calls=0", record["id"], record["status"], record["approval_status"])
         return record["id"]
     active = {name: value for name, value in (publishers or {}).items() if name in settings.app.get("enabled_platforms", [])}
     _publish_record(repository, record, active, image_path, public_url)

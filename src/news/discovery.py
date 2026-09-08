@@ -24,8 +24,8 @@ def discover_sources(sources: list[dict], timeout: float = 20) -> list[NewsStory
                     continue
                 try:
                     stories.append(normalize_entry(dict(entry), source))
-                except (KeyError, TypeError, ValueError) as exc:
-                    logger.warning("Skipping malformed entry from %s: %s", source.get("name", source["url"]), exc)
-        except Exception as exc:
-            logger.warning("Skipping unavailable news source %s: %s", source.get("name", source.get("url", "unknown")), exc)
-    return stories
+                except (KeyError, TypeError, ValueError):
+                    logger.warning("DISCOVERY skipping malformed entry")
+        except Exception:
+            logger.warning("DISCOVERY skipping unavailable source")
+    return list({str(story.source_url): story for story in stories}.values())
